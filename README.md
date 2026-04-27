@@ -2,38 +2,154 @@
 
 BLF-inspired binary forecasting for ATM or near-the-money call options.
 
-The first milestone is a reproducible DuckDB backtest:
-
-1. Store option-chain snapshots and underlying bars.
-2. Build strictly time-safe option examples.
-3. Fit non-LLM probability baselines.
-4. Add a Bayesian Linguistic Forecaster-style agent loop.
-5. Aggregate, calibrate, and evaluate predictions.
-
 This is research software, not trading advice or a live trading system.
 
-## Live Cloud Shape
+## Current State
 
-The intended production shape is:
+The system now runs a live, no-leakage forecasting loop on GCP for hourly call-option predictions. It uses Yahoo Finance as the first market data provider, OpenAI for LLM probabilities, Cloud SQL as the transactional source of truth, BigQuery as an analytics mirror, GCS for dataset artifacts, and DuckDB for offline/local analysis.
 
-- Cloud SQL Postgres as the live transactional source of truth.
-- BigQuery for append-heavy analytics/event history.
-- DuckDB for offline/local exports and model research.
+The live question template is:
 
-Cloud env vars are listed in [.env.example](.env.example). Deployment notes live in
-[docs/gcp_deployment_plan.md](docs/gcp_deployment_plan.md).
+```text
+Will the price of $TICKER be greater than $ATM_CALL_OPTION_STRIKE_PRICE on $DATE_OF_EXPIRY?
+```
 
-## Quick Smoke Test
+Important dataset rule: the same English question may repeat, but each hourly market snapshot is a distinct forecast instance. The identity is effectively ticker/option/strike/expiry plus forecast-hour information cutoff. This preserves changing option prices, spot, IV, volume/open interest, cached context, prompt, and LLM response over time.
+
+## Live GCP Deployment
+
+Project:
+
+```text
+murphys-494519
+```
+
+Region:
+
+```text
+us-west1
+```
+
+Main assets:
+
+- Cloud SQL Postgres instance: `murphy-postgres`
+- Artifact Registry image: `us-west1-docker.pkg.dev/murphys-494519/murphy/murphy:latest`
+- GCS artifact bucket: `gs://murphys-494519-murphy-artifacts`
+- BigQuery dataset: `murphy`
+- Secrets: `openai-api-key`, `murphy-db-pass`
+
+Enabled Cloud Scheduler jobs:
+
+| Job | Schedule PT | Purpose |
+| --- | --- | --- |
+| `murphy-live-cycle-trading-hourly` | `30 6-12 * * 1-5` | Collect market data, generate hourly forecast instances, call OpenAI |
+| `murphy-live-cycle-trading-close` | `0 13 * * 1-5` | Final close-time live cycle |
+| `murphy-resolve-and-report-post-close` | `15 13 * * 1-5` | Collect expiry-date bars, resolve due predictions, print report |
+| `murphy-bigquery-mirror-post-close` | `30 13 * * 1-5` | Mirror Cloud SQL live/audit tables to BigQuery |
+| `murphy-daily-status-post-close` | `45 13 * * 1-5` | Print operational status and warnings |
+| `murphy-scalar-sft-export-weekly` | `0 9 * * 6` | Export resolved ScalarLM SFT JSONL to GCS |
+
+## No-Leakage Design
+
+- Every forecast gets an `information_cutoff`.
+- Prompts include only stored evidence at or before that cutoff.
+- Market data and LLM calls are recorded in `external_call_cache`.
+- Cache records include request/response payloads, timestamps, and response hashes.
+- Resolution requires an underlying bar from the actual expiry date by default, preventing stale prior-close labeling.
+- Evaluation reports include leakage checks and cache hash references.
+
+## Data Stores
+
+Cloud SQL tables include:
+
+- `underlying_bars`
+- `option_chain_snapshots`
+- `option_examples`
+- `live_questions`
+- `llm_responses`
+- `live_resolutions`
+- `daily_runs`
+- `external_call_cache`
+
+BigQuery mirrors the live/audit tables for analytics. DuckDB exports are available for offline work.
+
+## Useful Commands
+
+Run tests:
 
 ```bash
 python3 -m pytest
 ```
 
-If dependencies are not installed yet, install in a virtual environment:
+Initialize local DuckDB:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev]"
+murphy init-db --db data/murphy.duckdb
 ```
-# Murphys
+
+Run a local/live cycle:
+
+```bash
+murphy run-live-cycle \
+  --provider yahoo \
+  --backend duckdb \
+  --tickers AAPL \
+  --dry-run
+```
+
+Print an operational report:
+
+```bash
+murphy daily-status --backend cloud-sql --include-bigquery
+```
+
+Print an evaluation report:
+
+```bash
+murphy evaluation-report --backend cloud-sql --ticker AAPL
+```
+
+Mirror Cloud SQL to BigQuery:
+
+```bash
+murphy mirror-cloud-sql-to-bigquery
+```
+
+Export Cloud SQL to DuckDB:
+
+```bash
+murphy export-cloud-sql-to-duckdb --duckdb data/murphy_offline.duckdb
+```
+
+Export resolved ScalarLM SFT rows:
+
+```bash
+murphy export-scalar-sft-dataset \
+  --backend cloud-sql \
+  --output /tmp/scalar_sft_resolved.jsonl \
+  --gcs-uri gs://murphys-494519-murphy-artifacts/scalar_sft/
+```
+
+## Verified So Far
+
+- Full test suite passes: `33 passed`.
+- Cloud Run `murphy-daily-status` executed successfully.
+- Cloud Run `murphy-scalar-sft-export` executed successfully and uploaded an expected empty JSONL while there are no resolved labels yet.
+- BigQuery mirror has been verified with live row counts.
+- The current deployed generator creates at most one forecast per ticker/strike/expiry per forecast hour.
+
+## Docs
+
+- Deployment details: [docs/gcp_deployment_plan.md](docs/gcp_deployment_plan.md)
+- Market data notes: [docs/market_data_provider_options.md](docs/market_data_provider_options.md)
+- Near-term implementation plan: [docs/next_implementation_plan.md](docs/next_implementation_plan.md)
+
+## Next Work
+
+Near-term priorities:
+
+- Add GCP log-based alerts or Monitoring policies for failed jobs and non-empty `daily-status` warnings.
+- Add cached web/news context at forecast time, stored through `external_call_cache`.
+- Add stronger probabilistic priors: option-implied probability, historical/logistic baseline, then BLF-style Bayesian updates using LLM responses as evidence.
+- Expand ticker coverage slowly after the first AAPL prediction-resolution cycle succeeds.
+- Add training/evaluation splits that avoid leakage across correlated hourly rows from the same option contract.
