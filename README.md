@@ -30,6 +30,19 @@ Region:
 us-west1
 ```
 
+Local `gcloud` note:
+
+```bash
+/usr/local/share/google-cloud-sdk/bin/gcloud auth login
+/usr/local/share/google-cloud-sdk/bin/gcloud config set project murphys-494519
+/usr/local/share/google-cloud-sdk/bin/gcloud config set run/region us-west1
+```
+
+On this machine the `gcloud` binary may not be on `PATH`; use the full path
+`/usr/local/share/google-cloud-sdk/bin/gcloud`. The local browser auth flow
+worked reliably. The `--no-launch-browser` remote verification-code flow hit
+Google's "Access blocked: This app's request is invalid" error.
+
 Main assets:
 
 - Cloud SQL Postgres instance: `murphy-postgres`
