@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from murphy.baselines import run_baselines
-from murphy.bigquery import initialize_bigquery_dataset
+from murphy.bigquery import initialize_bigquery_dataset, mirror_cloud_sql_to_bigquery
 from murphy.cloud_config import load_cloud_config_from_env
 from murphy.cloud_sql import initialize_cloud_sql
 from murphy.db import MurphyDb
@@ -169,6 +169,17 @@ def main() -> None:
         help="Export Cloud SQL live tables to a local DuckDB file for offline analytics.",
     )
     export_parser.add_argument("--duckdb", default="data/murphy_offline.duckdb")
+
+    bq_export_parser = subparsers.add_parser(
+        "mirror-cloud-sql-to-bigquery",
+        help="Mirror Cloud SQL live/audit tables into BigQuery for analytics.",
+    )
+    bq_export_parser.add_argument("--tables", nargs="+", default=None)
+    bq_export_parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Append rows instead of replacing each BigQuery table.",
+    )
 
     args = parser.parse_args()
 
@@ -360,6 +371,22 @@ def main() -> None:
         if config.cloud_sql is None:
             raise ValueError("Cloud SQL env vars are not configured")
         counts = export_cloud_sql_to_duckdb(config.cloud_sql, args.duckdb)
+        for table, count in counts.items():
+            print(f"{table}: {count}")
+        return
+
+    if args.command == "mirror-cloud-sql-to-bigquery":
+        config = load_cloud_config_from_env()
+        if config.cloud_sql is None:
+            raise ValueError("Cloud SQL env vars are not configured")
+        if config.bigquery is None:
+            raise ValueError("BigQuery env vars are not configured")
+        counts = mirror_cloud_sql_to_bigquery(
+            config.cloud_sql,
+            config.bigquery,
+            tables=args.tables,
+            write_disposition="WRITE_APPEND" if args.append else "WRITE_TRUNCATE",
+        )
         for table, count in counts.items():
             print(f"{table}: {count}")
         return
