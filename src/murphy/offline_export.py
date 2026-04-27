@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 from murphy.cloud_config import CloudSqlConfig
 from murphy.cloud_sql import close_cloud_sql_engine, create_cloud_sql_engine
@@ -17,6 +19,11 @@ EXPORT_TABLES = [
     "daily_runs",
     "external_call_cache",
 ]
+
+JSON_COLUMNS = {
+    "daily_runs": ["details_json"],
+    "external_call_cache": ["request_json", "response_json"],
+}
 
 
 def export_cloud_sql_to_duckdb(
@@ -37,6 +44,7 @@ def export_cloud_sql_to_duckdb(
         with engine.begin() as source_conn:
             for table in selected_tables:
                 dataframe = pd.read_sql_query(f"SELECT * FROM {table}", source_conn)
+                dataframe = normalize_json_columns(dataframe, JSON_COLUMNS.get(table, []))
                 duck.conn.execute(f"DELETE FROM {table}")
                 if dataframe.empty:
                     counts[table] = 0
@@ -50,3 +58,33 @@ def export_cloud_sql_to_duckdb(
         close_cloud_sql_engine(engine)
 
     return counts
+
+
+def normalize_json_columns(dataframe, columns: list[str]):
+    """Serialize object-valued JSON columns so DuckDB can cast them safely."""
+    import pandas as pd
+
+    for column in columns:
+        if column not in dataframe.columns:
+            continue
+        dataframe[column] = pd.Series(
+            [_json_cell(value) for value in dataframe[column]],
+            index=dataframe.index,
+            dtype="object",
+        )
+    return dataframe
+
+
+def _json_cell(value: Any) -> str | None:
+    try:
+        import pandas as pd
+
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, default=str, sort_keys=True)

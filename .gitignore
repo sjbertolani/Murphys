@@ -9,3 +9,5 @@ __pycache__/
 .ruff_cache/
 data/*.duckdb
 data/*.duckdb.wal
+data/*.jsonl
+data/*.md

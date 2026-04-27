@@ -185,7 +185,7 @@ murphy export-scalar-sft-splits \
 
 ## Verified So Far
 
-- Full test suite passes: `43 passed`.
+- Full test suite passes: `45 passed`.
 - Cloud Run `murphy-daily-status` executed successfully.
 - Cloud Run `murphy-scalar-sft-export` executed successfully and uploaded an expected empty JSONL while there are no resolved labels yet.
 - BigQuery mirror has been verified with live row counts.
