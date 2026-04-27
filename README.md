@@ -14,6 +14,13 @@ The live question template is:
 Will the price of $TICKER be greater than $ATM_CALL_OPTION_STRIKE_PRICE on $DATE_OF_EXPIRY?
 ```
 
+Question generation now uses a short-term strike ladder:
+
+- Expiries are limited to the next 14 days.
+- For each ticker and expiry, select up to 5 call strikes below the current spot price.
+- Also select up to 5 call strikes at or above the current spot price.
+- Each selected strike becomes a binary question for that forecast timestamp.
+
 Important dataset rule: the same English question may repeat, but each hourly market snapshot is a distinct forecast instance. The identity is effectively ticker/option/strike/expiry plus forecast-hour information cutoff. This preserves changing option prices, spot, IV, volume/open interest, cached context, prompt, and LLM response over time.
 
 Current live ticker set:
@@ -162,7 +169,7 @@ murphy export-scalar-sft-dataset \
 
 ## Verified So Far
 
-- Full test suite passes: `38 passed`.
+- Full test suite passes: `39 passed`.
 - Cloud Run `murphy-daily-status` executed successfully.
 - Cloud Run `murphy-scalar-sft-export` executed successfully and uploaded an expected empty JSONL while there are no resolved labels yet.
 - BigQuery mirror has been verified with live row counts.

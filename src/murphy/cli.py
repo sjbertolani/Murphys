@@ -76,11 +76,12 @@ def main() -> None:
     )
     live_parser.add_argument("--db", default="data/murphy.duckdb")
     live_parser.add_argument("--max-abs-moneyness", type=float, default=0.03)
-    live_parser.add_argument("--min-dte", type=float, default=5.0)
-    live_parser.add_argument("--max-dte", type=float, default=10.0)
+    live_parser.add_argument("--min-dte", type=float, default=0.0)
+    live_parser.add_argument("--max-dte", type=float, default=14.0)
     live_parser.add_argument("--max-questions", type=int, default=50)
     live_parser.add_argument("--min-open-interest", type=float, default=1.0)
     live_parser.add_argument("--min-volume", type=float, default=0.0)
+    live_parser.add_argument("--strike-window-size", type=int, default=5)
 
     prompt_parser = subparsers.add_parser(
         "export-pending-prompts",
@@ -117,8 +118,8 @@ def main() -> None:
     collect_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
     collect_parser.add_argument("--db", default="data/murphy.duckdb")
     collect_parser.add_argument("--tickers", nargs="+", required=True)
-    collect_parser.add_argument("--min-dte", type=int, default=5)
-    collect_parser.add_argument("--max-dte", type=int, default=10)
+    collect_parser.add_argument("--min-dte", type=int, default=0)
+    collect_parser.add_argument("--max-dte", type=int, default=14)
     collect_parser.add_argument("--lookback-days", type=int, default=10)
 
     predict_parser = subparsers.add_parser(
@@ -139,10 +140,11 @@ def main() -> None:
     cycle_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
     cycle_parser.add_argument("--db", default="data/murphy.duckdb")
     cycle_parser.add_argument("--tickers", nargs="+", required=True)
-    cycle_parser.add_argument("--min-dte", type=int, default=5)
-    cycle_parser.add_argument("--max-dte", type=int, default=10)
+    cycle_parser.add_argument("--min-dte", type=int, default=0)
+    cycle_parser.add_argument("--max-dte", type=int, default=14)
     cycle_parser.add_argument("--lookback-days", type=int, default=10)
     cycle_parser.add_argument("--max-questions", type=int, default=50)
+    cycle_parser.add_argument("--strike-window-size", type=int, default=5)
     cycle_parser.add_argument("--model", default="gpt-4.1-mini")
     cycle_parser.add_argument("--prediction-limit", type=int, default=None)
     cycle_parser.add_argument("--dry-run", action="store_true")
@@ -245,6 +247,7 @@ def main() -> None:
             max_questions=args.max_questions,
             min_open_interest=args.min_open_interest,
             min_volume=args.min_volume,
+            strike_window_size=args.strike_window_size,
         )
         print(f"generated {len(questions)} live questions")
         for question in questions[:5]:
@@ -367,6 +370,7 @@ def main() -> None:
                 min_dte=args.min_dte,
                 max_dte=args.max_dte,
                 max_questions=args.max_questions,
+                strike_window_size=args.strike_window_size,
             )
             predictor = (
                 DeterministicPredictor(model="dry-run")

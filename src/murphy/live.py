@@ -48,35 +48,49 @@ Return strict JSON:
 def generate_live_questions_from_snapshots(
     db_path: str = "data/murphy.duckdb",
     max_abs_moneyness: float = 0.03,
-    min_dte: float = 5.0,
-    max_dte: float = 10.0,
+    min_dte: float = 0.0,
+    max_dte: float = 14.0,
     max_questions: int = 50,
     min_open_interest: float = 1.0,
     min_volume: float = 0.0,
+    strike_window_size: int = 5,
     source: str = "live_option_chain",
 ) -> list[LiveQuestion]:
     """Generate unresolved questions from the latest stored option snapshots."""
     import duckdb
 
+    del max_abs_moneyness
     con = duckdb.connect(db_path)
     try:
         rows = con.execute(
             """
             WITH latest AS (
-              SELECT max(quote_timestamp) AS quote_timestamp
+              SELECT symbol, max(quote_timestamp) AS quote_timestamp
               FROM option_chain_snapshots
+              GROUP BY symbol
             ),
             candidates AS (
               SELECT
                 s.*,
                 date_diff('second', s.quote_timestamp, s.expiration) / 86400.0 AS dte,
-                s.spot / s.strike - 1.0 AS moneyness
-              FROM option_chain_snapshots s, latest
-              WHERE s.quote_timestamp = latest.quote_timestamp
-                AND s.option_right = 'C'
+                s.spot / s.strike - 1.0 AS moneyness,
+                CASE WHEN s.strike < s.spot THEN 'below' ELSE 'above' END AS strike_side,
+                row_number() OVER (
+                  PARTITION BY
+                    s.symbol,
+                    s.expiration,
+                    CASE WHEN s.strike < s.spot THEN 'below' ELSE 'above' END
+                  ORDER BY
+                    CASE WHEN s.strike < s.spot THEN s.strike END DESC,
+                    CASE WHEN s.strike >= s.spot THEN s.strike END ASC
+                ) AS strike_side_rank
+              FROM option_chain_snapshots s
+              JOIN latest
+                ON latest.symbol = s.symbol
+               AND latest.quote_timestamp = s.quote_timestamp
+              WHERE s.option_right = 'C'
                 AND s.spot IS NOT NULL
                 AND s.strike > 0
-                AND abs(s.spot / s.strike - 1.0) <= ?
                 AND date_diff('second', s.quote_timestamp, s.expiration) / 86400.0 BETWEEN ? AND ?
                 AND coalesce(s.open_interest, 0) >= ?
                 AND coalesce(s.volume, 0) >= ?
@@ -94,10 +108,11 @@ def generate_live_questions_from_snapshots(
             SELECT
               symbol, option_symbol, quote_timestamp, expiration, strike, spot, dte, moneyness
             FROM candidates
-            ORDER BY coalesce(open_interest, 0) DESC, coalesce(volume, 0) DESC
+            WHERE strike_side_rank <= ?
+            ORDER BY expiration, strike_side_rank, strike_side, symbol, strike
             LIMIT ?
             """,
-            [max_abs_moneyness, min_dte, max_dte, min_open_interest, min_volume, max_questions],
+            [min_dte, max_dte, min_open_interest, min_volume, strike_window_size, max_questions],
         ).fetchall()
 
         questions: list[LiveQuestion] = []

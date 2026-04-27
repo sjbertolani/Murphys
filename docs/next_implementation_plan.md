@@ -9,6 +9,14 @@ Current live ticker set:
 AAPL MSFT NVDA AMD SPY QQQ
 ```
 
+Current live question generation rule:
+
+- Fetch expiries from 0 to 14 days out.
+- For each ticker/expiry, generate questions for up to 5 call strikes below
+  current spot and up to 5 call strikes at or above current spot.
+- Keep each hourly market snapshot as a distinct forecast instance, even when
+  the plain-English question repeats.
+
 ## 1. Operational Status And Warnings
 
 Implemented first because it gives fast feedback from scheduled Cloud Run logs.

@@ -279,6 +279,66 @@ def test_duckdb_repository_limits_one_question_per_strike_expiry_hour(tmp_path) 
         repo.close()
 
 
+def test_duckdb_repository_generates_strike_ladder_around_spot(tmp_path) -> None:
+    db_path = tmp_path / "murphy.duckdb"
+    quote_time = datetime(2026, 4, 27, 16, 0, tzinfo=timezone.utc)
+    expiration = quote_time + timedelta(days=12)
+    repo = DuckDbRepository(db_path)
+    try:
+        repo.insert_option_snapshots(
+            [
+                OptionSnapshot(
+                    symbol="AAPL",
+                    option_symbol=f"AAPL260508C{int(strike * 1000):08d}",
+                    quote_timestamp=quote_time,
+                    expiration=expiration,
+                    strike=strike,
+                    right=OptionRight.CALL,
+                    bid=1.0,
+                    ask=1.2,
+                    mid=1.1,
+                    implied_volatility=0.3,
+                    volume=10,
+                    open_interest=100,
+                    spot=100.0,
+                )
+                for strike in range(70, 135, 5)
+            ]
+        )
+        repo.insert_option_snapshots(
+            [
+                OptionSnapshot(
+                    symbol="AAPL",
+                    option_symbol="AAPL260520C00100000",
+                    quote_timestamp=quote_time,
+                    expiration=quote_time + timedelta(days=23),
+                    strike=100,
+                    right=OptionRight.CALL,
+                    bid=1.0,
+                    ask=1.2,
+                    mid=1.1,
+                    implied_volatility=0.3,
+                    volume=10,
+                    open_interest=100,
+                    spot=100.0,
+                )
+            ]
+        )
+
+        questions = repo.generate_live_questions(
+            min_dte=0,
+            max_dte=14,
+            max_questions=50,
+            strike_window_size=5,
+        )
+
+        strikes = sorted(question.strike for question in questions)
+        assert strikes == [75, 80, 85, 90, 95, 100, 105, 110, 115, 120]
+        assert all(question.expiration.date() == expiration.date() for question in questions)
+    finally:
+        repo.close()
+
+
 def test_duckdb_resolver_requires_expiration_date_bar(tmp_path) -> None:
     db_path = tmp_path / "murphy.duckdb"
     quote_time = datetime(2026, 4, 18, 16, 0, tzinfo=timezone.utc)

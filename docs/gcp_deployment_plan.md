@@ -247,7 +247,7 @@ gcloud run jobs create murphy-collect-yahoo \
   --region "$REGION" \
   --service-account "murphy-runner@$PROJECT_ID.iam.gserviceaccount.com" \
   --command murphy \
-  --args collect-snapshots,--provider,yahoo,--backend,cloud-sql,--tickers,AAPL,MSFT,NVDA,AMD,SPY,QQQ,--min-dte,5,--max-dte,10,--lookback-days,10 \
+  --args collect-snapshots,--provider,yahoo,--backend,cloud-sql,--tickers,AAPL,MSFT,NVDA,AMD,SPY,QQQ,--min-dte,0,--max-dte,14,--lookback-days,10 \
   --set-env-vars CLOUD_SQL_CONNECTION_NAME="$PROJECT_ID:$REGION:murphy-postgres",DB_NAME=murphy,DB_USER=murphy_app
 ```
 
@@ -261,7 +261,7 @@ gcloud run jobs create murphy-live-cycle \
   --region "$REGION" \
   --service-account "murphy-runner@$PROJECT_ID.iam.gserviceaccount.com" \
   --command murphy \
-  --args run-live-cycle,--provider,yahoo,--backend,cloud-sql,--tickers,AAPL,MSFT,NVDA,AMD,SPY,QQQ,--min-dte,5,--max-dte,10,--lookback-days,10,--max-questions,50,--model,gpt-4.1-mini \
+  --args run-live-cycle,--provider,yahoo,--backend,cloud-sql,--tickers,AAPL,MSFT,NVDA,AMD,SPY,QQQ,--min-dte,0,--max-dte,14,--lookback-days,10,--max-questions,50,--strike-window-size,5,--model,gpt-4.1-mini \
   --set-env-vars CLOUD_SQL_CONNECTION_NAME="$PROJECT_ID:$REGION:murphy-postgres",DB_NAME=murphy,DB_USER=murphy_app
 ```
 
