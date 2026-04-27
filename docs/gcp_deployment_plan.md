@@ -301,6 +301,9 @@ Suggested first schedule:
 
 For live forecasts:
 
+- Generate at most one forecast per ticker/strike/expiry per forecast hour.
+  Later hourly snapshots for the same option are intentionally new forecast
+  instances because pricing and external context may have changed.
 - `information_cutoff` is the snapshot timestamp.
 - The prompt includes only stored option/price evidence whose timestamps are <= cutoff.
 - If web/news search is used, it must run at forecast time and raw observations must be persisted.

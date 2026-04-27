@@ -103,7 +103,7 @@ def test_duckdb_repository_live_question_and_prediction(tmp_path) -> None:
         con.close()
 
 
-def test_duckdb_repository_limits_one_question_per_strike_expiry_day(tmp_path) -> None:
+def test_duckdb_repository_limits_one_question_per_strike_expiry_hour(tmp_path) -> None:
     db_path = tmp_path / "murphy.duckdb"
     quote_time = datetime(2026, 4, 27, 16, 0, tzinfo=timezone.utc)
     expiration = quote_time + timedelta(days=7)
@@ -135,7 +135,7 @@ def test_duckdb_repository_limits_one_question_per_strike_expiry_day(tmp_path) -
                 OptionSnapshot(
                     symbol="AAPL",
                     option_symbol="AAPL260504C00200000",
-                    quote_timestamp=quote_time + timedelta(hours=1),
+                    quote_timestamp=quote_time + timedelta(minutes=30),
                     expiration=expiration,
                     strike=200,
                     right=OptionRight.CALL,
@@ -156,7 +156,7 @@ def test_duckdb_repository_limits_one_question_per_strike_expiry_day(tmp_path) -
                 OptionSnapshot(
                     symbol="AAPL",
                     option_symbol="AAPL260504C00200000",
-                    quote_timestamp=quote_time + timedelta(days=1),
+                    quote_timestamp=quote_time + timedelta(hours=1),
                     expiration=expiration,
                     strike=200,
                     right=OptionRight.CALL,
@@ -170,8 +170,8 @@ def test_duckdb_repository_limits_one_question_per_strike_expiry_day(tmp_path) -
                 )
             ]
         )
-        next_day_questions = repo.generate_live_questions(min_dte=5, max_dte=10, max_questions=5)
-        assert len(next_day_questions) == 1
+        next_hour_questions = repo.generate_live_questions(min_dte=5, max_dte=10, max_questions=5)
+        assert len(next_hour_questions) == 1
     finally:
         repo.close()
 

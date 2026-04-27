@@ -35,6 +35,10 @@ murphy export-scalar-sft-dataset \
 
 ## 3. Near-Term Follow Ups
 
+- Treat each hourly market snapshot as a distinct forecast instance. The plain
+  English question can repeat for the same ticker/strike/expiry, but the option
+  price, spot, IV, volume/open interest, cached web context, prompt, and LLM
+  response belong to the forecast hour when they were captured.
 - Add GCP log-based alerts or Monitoring policies for failed Cloud Run jobs.
 - Add a weekly scheduled ScalarLM dataset export after enough resolutions exist.
 - Expand ticker coverage slowly once AAPL has a complete prediction-resolution

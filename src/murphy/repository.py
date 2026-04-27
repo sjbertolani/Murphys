@@ -407,7 +407,8 @@ class CloudSqlRepository:
                   WHERE e.symbol = s.symbol
                     AND e.expiration = s.expiration
                     AND e.strike = s.strike
-                    AND CAST(e.forecast_timestamp AS DATE) = CAST(s.quote_timestamp AS DATE)
+                    AND date_trunc('hour', e.forecast_timestamp)
+                        = date_trunc('hour', s.quote_timestamp)
                 )
             )
             SELECT
@@ -1023,7 +1024,8 @@ def _generate_live_questions_duckdb(
               WHERE e.symbol = s.symbol
                 AND e.expiration = s.expiration
                 AND e.strike = s.strike
-                AND CAST(e.forecast_timestamp AS DATE) = CAST(s.quote_timestamp AS DATE)
+                AND date_trunc('hour', e.forecast_timestamp)
+                    = date_trunc('hour', s.quote_timestamp)
             )
         )
         SELECT
