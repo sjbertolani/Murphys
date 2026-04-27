@@ -57,7 +57,7 @@ Enabled Cloud Scheduler jobs:
 - Cache records include request/response payloads, timestamps, and response hashes.
 - Resolution requires an underlying bar from the actual expiry date by default, preventing stale prior-close labeling.
 - Evaluation reports include leakage checks and cache hash references.
-- Prediction traces include market-implied prior, raw LLM probability, and a BLF-style log-odds posterior update.
+- Prediction traces include market-implied prior, historical empirical prior when enough prior labels exist, raw LLM probability, and a BLF-style log-odds posterior update.
 
 ## Data Stores
 
@@ -151,6 +151,6 @@ murphy export-scalar-sft-dataset \
 Near-term priorities:
 
 - Add notification channels to the GCP alert policies.
-- Add stronger historical/logistic baselines alongside the option-implied prior and BLF-style posterior.
+- Add a trained logistic live prior once enough resolved labels exist; the guarded historical empirical prior is already wired in.
 - Expand ticker coverage slowly after the first AAPL prediction-resolution cycle succeeds.
 - Add training/evaluation splits that avoid leakage across correlated hourly rows from the same option contract.

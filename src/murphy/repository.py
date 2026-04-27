@@ -157,8 +157,12 @@ class DuckDbRepository:
         ).fetchone()
         if info_cutoff is None:
             raise ValueError(f"unknown question_id {question_id}")
-        market_prior = _market_prior_for_example_duckdb(self.db.conn, info_cutoff[1])
-        posterior_probability = bayesian_binary_update(market_prior, probability, signal_weight=0.75)
+        prior_components = _prior_components_for_example_duckdb(self.db.conn, info_cutoff[1])
+        posterior_probability = bayesian_binary_update(
+            prior_components["combined_prior_probability"],
+            probability,
+            signal_weight=0.75,
+        )
         self.db.conn.execute(
             """
             INSERT INTO llm_responses
@@ -204,7 +208,7 @@ class DuckDbRepository:
             probability=probability,
             reasoning=reasoning,
             raw_response=raw_response,
-            market_prior=market_prior,
+            prior_components=prior_components,
             posterior_probability=posterior_probability,
         )
         self.db.conn.execute(
@@ -537,9 +541,13 @@ class CloudSqlRepository:
             ).fetchone()
             if info_cutoff is None:
                 raise ValueError(f"unknown question_id {question_id}")
-            market_prior = _market_prior_for_example_postgres(conn, sqlalchemy, info_cutoff.example_id)
+            prior_components = _prior_components_for_example_postgres(
+                conn,
+                sqlalchemy,
+                info_cutoff.example_id,
+            )
             posterior_probability = bayesian_binary_update(
-                market_prior,
+                prior_components["combined_prior_probability"],
                 probability,
                 signal_weight=0.75,
             )
@@ -594,7 +602,7 @@ class CloudSqlRepository:
                 probability=probability,
                 reasoning=reasoning,
                 raw_response=raw_response,
-                market_prior=market_prior,
+                prior_components=prior_components,
                 posterior_probability=posterior_probability,
             )
             conn.execute(
@@ -873,17 +881,19 @@ def _prediction_beliefs(
     probability: float,
     reasoning: str | None,
     raw_response: str | None,
-    market_prior: float,
+    prior_components: dict,
     posterior_probability: float,
 ) -> dict:
+    prior_probability = float(prior_components["combined_prior_probability"])
     return {
         "initial": {
-            "probability": float(market_prior),
+            "probability": prior_probability,
             "confidence": 0.0,
             "evidence_for": [],
             "evidence_against": [],
             "open_questions": ["Awaiting LLM probability estimate from cutoff-bounded prompt."],
-            "update_reasoning": "Market-implied prior before the LLM response is observed.",
+            "update_reasoning": "Prior belief before the LLM response is observed.",
+            "prior_components": prior_components,
         },
         "llm": {
             "probability": float(probability),
@@ -901,10 +911,10 @@ def _prediction_beliefs(
             "evidence_against": [],
             "open_questions": [],
             "update_reasoning": (
-                "Log-odds Bayesian update combining the market-implied prior with "
-                "the LLM probability signal."
+                "Log-odds Bayesian update combining the prior components with the "
+                "LLM probability signal."
             ),
-            "market_prior": float(market_prior),
+            "prior_components": prior_components,
             "llm_probability": float(probability),
             "llm_signal_weight": 0.75,
         },
@@ -920,7 +930,7 @@ def _record_prediction_trace_duckdb(
     probability: float,
     reasoning: str | None,
     raw_response: str | None,
-    market_prior: float,
+    prior_components: dict,
     posterior_probability: float,
 ) -> None:
     trial_id = f"llm:{response_id}"
@@ -928,9 +938,10 @@ def _record_prediction_trace_duckdb(
         probability,
         reasoning,
         raw_response,
-        market_prior,
+        prior_components,
         posterior_probability,
     )
+    prior_probability = float(prior_components["combined_prior_probability"])
     conn.execute(
         """
         INSERT INTO agent_trials
@@ -953,7 +964,7 @@ def _record_prediction_trace_duckdb(
                 json.dumps({"type": "initialize"}),
                 None,
                 json.dumps(beliefs["initial"], sort_keys=True),
-                market_prior,
+                prior_probability,
             ],
             [
                 trial_id,
@@ -986,7 +997,7 @@ def _record_prediction_trace_postgres(
     probability: float,
     reasoning: str | None,
     raw_response: str | None,
-    market_prior: float,
+    prior_components: dict,
     posterior_probability: float,
 ) -> None:
     import sqlalchemy
@@ -996,9 +1007,10 @@ def _record_prediction_trace_postgres(
         probability,
         reasoning,
         raw_response,
-        market_prior,
+        prior_components,
         posterior_probability,
     )
+    prior_probability = float(prior_components["combined_prior_probability"])
     conn.execute(
         sqlalchemy.text(
             """
@@ -1034,7 +1046,7 @@ def _record_prediction_trace_postgres(
                 "action_json": json.dumps({"type": "initialize"}),
                 "observation_ref": None,
                 "belief_json": json.dumps(beliefs["initial"], sort_keys=True),
-                "probability": market_prior,
+                "probability": prior_probability,
             },
             {
                 "trial_id": trial_id,
@@ -1056,6 +1068,41 @@ def _record_prediction_trace_postgres(
             },
         ],
     )
+
+
+def _prior_components_for_example_duckdb(conn, example_id: str) -> dict:
+    market_prior = _market_prior_for_example_duckdb(conn, example_id)
+    historical_prior, historical_scope, historical_count = _historical_empirical_prior_duckdb(
+        conn,
+        example_id,
+    )
+    combined_prior = _combine_prior_components(market_prior, historical_prior)
+    return {
+        "market_implied_prior_probability": float(market_prior),
+        "historical_empirical_prior_probability": historical_prior,
+        "historical_empirical_scope": historical_scope,
+        "historical_empirical_count": historical_count,
+        "historical_signal_weight": 0.5 if historical_prior is not None else 0.0,
+        "combined_prior_probability": float(combined_prior),
+    }
+
+
+def _prior_components_for_example_postgres(conn, sqlalchemy, example_id: str) -> dict:
+    market_prior = _market_prior_for_example_postgres(conn, sqlalchemy, example_id)
+    historical_prior, historical_scope, historical_count = _historical_empirical_prior_postgres(
+        conn,
+        sqlalchemy,
+        example_id,
+    )
+    combined_prior = _combine_prior_components(market_prior, historical_prior)
+    return {
+        "market_implied_prior_probability": float(market_prior),
+        "historical_empirical_prior_probability": historical_prior,
+        "historical_empirical_scope": historical_scope,
+        "historical_empirical_count": historical_count,
+        "historical_signal_weight": 0.5 if historical_prior is not None else 0.0,
+        "combined_prior_probability": float(combined_prior),
+    }
 
 
 def _market_prior_for_example_duckdb(conn, example_id: str) -> float:
@@ -1094,6 +1141,149 @@ def _market_prior_for_example_postgres(conn, sqlalchemy, example_id: str) -> flo
     if row is None:
         return 0.5
     return _market_prior_from_snapshot(row.spot, row.strike, row.dte, row.implied_volatility, row.delta)
+
+
+def _historical_empirical_prior_duckdb(conn, example_id: str) -> tuple[float | None, str | None, int]:
+    row = conn.execute(
+        """
+        SELECT symbol, forecast_timestamp, dte, moneyness
+        FROM option_examples
+        WHERE example_id = ?
+        """,
+        [example_id],
+    ).fetchone()
+    if row is None:
+        return None, None, 0
+    symbol, forecast_timestamp, dte, moneyness = row
+    scoped = conn.execute(
+        """
+        SELECT count(*), coalesce(sum(label), 0)
+        FROM option_examples
+        WHERE label IS NOT NULL
+          AND forecast_timestamp < ?
+          AND symbol = ?
+          AND abs(moneyness - ?) <= 0.02
+          AND abs(dte - ?) <= 7
+        """,
+        [forecast_timestamp, symbol, moneyness, dte],
+    ).fetchone()
+    prior = _smoothed_historical_prior(scoped[1], scoped[0], min_count=20)
+    if prior is not None:
+        return prior, "symbol_moneyness_dte", int(scoped[0])
+
+    symbol_wide = conn.execute(
+        """
+        SELECT count(*), coalesce(sum(label), 0)
+        FROM option_examples
+        WHERE label IS NOT NULL
+          AND forecast_timestamp < ?
+          AND symbol = ?
+        """,
+        [forecast_timestamp, symbol],
+    ).fetchone()
+    prior = _smoothed_historical_prior(symbol_wide[1], symbol_wide[0], min_count=20)
+    if prior is not None:
+        return prior, "symbol", int(symbol_wide[0])
+
+    global_wide = conn.execute(
+        """
+        SELECT count(*), coalesce(sum(label), 0)
+        FROM option_examples
+        WHERE label IS NOT NULL
+          AND forecast_timestamp < ?
+        """,
+        [forecast_timestamp],
+    ).fetchone()
+    prior = _smoothed_historical_prior(global_wide[1], global_wide[0], min_count=50)
+    if prior is not None:
+        return prior, "global", int(global_wide[0])
+    return None, None, 0
+
+
+def _historical_empirical_prior_postgres(
+    conn,
+    sqlalchemy,
+    example_id: str,
+) -> tuple[float | None, str | None, int]:
+    row = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT symbol, forecast_timestamp, dte, moneyness
+            FROM option_examples
+            WHERE example_id = :example_id
+            """
+        ),
+        {"example_id": example_id},
+    ).fetchone()
+    if row is None:
+        return None, None, 0
+    scoped = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT count(*), coalesce(sum(label), 0)
+            FROM option_examples
+            WHERE label IS NOT NULL
+              AND forecast_timestamp < :forecast_timestamp
+              AND symbol = :symbol
+              AND abs(moneyness - :moneyness) <= 0.02
+              AND abs(dte - :dte) <= 7
+            """
+        ),
+        {
+            "forecast_timestamp": row.forecast_timestamp,
+            "symbol": row.symbol,
+            "moneyness": row.moneyness,
+            "dte": row.dte,
+        },
+    ).fetchone()
+    prior = _smoothed_historical_prior(scoped[1], scoped[0], min_count=20)
+    if prior is not None:
+        return prior, "symbol_moneyness_dte", int(scoped[0])
+
+    symbol_wide = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT count(*), coalesce(sum(label), 0)
+            FROM option_examples
+            WHERE label IS NOT NULL
+              AND forecast_timestamp < :forecast_timestamp
+              AND symbol = :symbol
+            """
+        ),
+        {"forecast_timestamp": row.forecast_timestamp, "symbol": row.symbol},
+    ).fetchone()
+    prior = _smoothed_historical_prior(symbol_wide[1], symbol_wide[0], min_count=20)
+    if prior is not None:
+        return prior, "symbol", int(symbol_wide[0])
+
+    global_wide = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT count(*), coalesce(sum(label), 0)
+            FROM option_examples
+            WHERE label IS NOT NULL
+              AND forecast_timestamp < :forecast_timestamp
+            """
+        ),
+        {"forecast_timestamp": row.forecast_timestamp},
+    ).fetchone()
+    prior = _smoothed_historical_prior(global_wide[1], global_wide[0], min_count=50)
+    if prior is not None:
+        return prior, "global", int(global_wide[0])
+    return None, None, 0
+
+
+def _smoothed_historical_prior(successes, total, min_count: int) -> float | None:
+    total = int(total or 0)
+    if total < min_count:
+        return None
+    return float((float(successes or 0) + 1.0) / (total + 2.0))
+
+
+def _combine_prior_components(market_prior: float, historical_prior: float | None) -> float:
+    if historical_prior is None:
+        return float(market_prior)
+    return bayesian_binary_update(market_prior, historical_prior, signal_weight=0.5)
 
 
 def _market_prior_from_snapshot(
@@ -1294,7 +1484,8 @@ def _evidence_block_duckdb(conn, question_id: str) -> str:
         SELECT
           e.symbol, e.forecast_timestamp, q.information_cutoff, e.expiration,
           e.strike, e.spot, e.dte, e.moneyness,
-          s.bid, s.ask, s.mid, s.implied_volatility, s.delta, s.volume, s.open_interest
+          s.bid, s.ask, s.mid, s.implied_volatility, s.delta, s.volume, s.open_interest,
+          e.example_id
         FROM live_questions q
         JOIN option_examples e ON e.example_id = q.example_id
         LEFT JOIN option_chain_snapshots s
@@ -1319,7 +1510,8 @@ def _evidence_block_duckdb(conn, question_id: str) -> str:
         [row[0], row[1]],
     ).fetchall()
     news_items = _news_context_items_duckdb(conn, symbol=row[0], information_cutoff=row[2])
-    return _format_evidence_block(row, bars, news_items)
+    prior_components = _prior_components_for_example_duckdb(conn, row[15])
+    return _format_evidence_block(row, bars, news_items, prior_components)
 
 
 def _evidence_block_postgres(conn, question_id: str) -> str:
@@ -1331,7 +1523,8 @@ def _evidence_block_postgres(conn, question_id: str) -> str:
             SELECT
               e.symbol, e.forecast_timestamp, q.information_cutoff, e.expiration,
               e.strike, e.spot, e.dte, e.moneyness,
-              s.bid, s.ask, s.mid, s.implied_volatility, s.delta, s.volume, s.open_interest
+              s.bid, s.ask, s.mid, s.implied_volatility, s.delta, s.volume, s.open_interest,
+              e.example_id
             FROM live_questions q
             JOIN option_examples e ON e.example_id = q.example_id
             LEFT JOIN option_chain_snapshots s
@@ -1364,10 +1557,16 @@ def _evidence_block_postgres(conn, question_id: str) -> str:
         symbol=row.symbol,
         information_cutoff=row.information_cutoff,
     )
-    return _format_evidence_block(tuple(row), [tuple(bar) for bar in bars], news_items)
+    prior_components = _prior_components_for_example_postgres(conn, sqlalchemy, row.example_id)
+    return _format_evidence_block(tuple(row), [tuple(bar) for bar in bars], news_items, prior_components)
 
 
-def _format_evidence_block(row, bars, news_items: list[dict] | None = None) -> str:
+def _format_evidence_block(
+    row,
+    bars,
+    news_items: list[dict] | None = None,
+    prior_components: dict | None = None,
+) -> str:
     (
         symbol,
         forecast_timestamp,
@@ -1384,8 +1583,16 @@ def _format_evidence_block(row, bars, news_items: list[dict] | None = None) -> s
         delta,
         volume,
         open_interest,
+        _example_id,
     ) = row
     market_prior = _market_prior_from_snapshot(spot, strike, dte, iv, delta)
+    prior_components = prior_components or {
+        "market_implied_prior_probability": market_prior,
+        "historical_empirical_prior_probability": None,
+        "historical_empirical_scope": None,
+        "historical_empirical_count": 0,
+        "combined_prior_probability": market_prior,
+    }
     bar_lines = [
         "recent_underlying_bars_most_recent_first:",
         *[
@@ -1419,7 +1626,14 @@ def _format_evidence_block(row, bars, news_items: list[dict] | None = None) -> s
             f"mid: {mid}",
             f"implied_volatility: {iv}",
             f"delta: {delta}",
-            f"market_implied_prior_probability: {market_prior:.6f}",
+            "market_implied_prior_probability: "
+            f"{float(prior_components['market_implied_prior_probability']):.6f}",
+            "historical_empirical_prior_probability: "
+            f"{prior_components['historical_empirical_prior_probability']}",
+            f"historical_empirical_scope: {prior_components['historical_empirical_scope']}",
+            f"historical_empirical_count: {prior_components['historical_empirical_count']}",
+            "combined_prior_probability: "
+            f"{float(prior_components['combined_prior_probability']):.6f}",
             f"volume: {volume}",
             f"open_interest: {open_interest}",
             *bar_lines,

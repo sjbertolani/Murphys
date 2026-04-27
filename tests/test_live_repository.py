@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import duckdb
@@ -45,6 +46,25 @@ def test_duckdb_repository_live_question_and_prediction(tmp_path) -> None:
                     spot=201,
                 )
             ]
+        )
+        repo.db.conn.executemany(
+            """
+            INSERT INTO option_examples
+              (example_id, symbol, option_symbol, forecast_timestamp, expiration,
+               strike, spot, dte, moneyness, label, resolution_timestamp)
+            VALUES (?, 'AAPL', ?, ?, ?, 200, 201, 7, 0.005, ?, ?)
+            """,
+            [
+                (
+                    f"history-{index}",
+                    f"HIST{index}",
+                    quote_time - timedelta(days=30 - index),
+                    quote_time - timedelta(days=30 - index) + timedelta(days=7),
+                    1 if index < 15 else 0,
+                    quote_time - timedelta(days=23 - index),
+                )
+                for index in range(20)
+            ],
         )
         questions = repo.generate_live_questions(min_dte=5, max_dte=10, max_questions=5)
         assert len(questions) == 1
@@ -115,6 +135,19 @@ def test_duckdb_repository_live_question_and_prediction(tmp_path) -> None:
             "bayesian_update",
         ]
         assert steps[0][1] != 0.5
+        initial_belief = json.loads(
+            con.execute(
+                """
+                SELECT belief_json
+                FROM agent_steps
+                WHERE action_type = 'initialize_belief'
+                """
+            ).fetchone()[0]
+        )
+        assert initial_belief["prior_components"]["historical_empirical_count"] == 20
+        assert initial_belief["prior_components"]["historical_empirical_scope"] == (
+            "symbol_moneyness_dte"
+        )
     finally:
         con.close()
 

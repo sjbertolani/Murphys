@@ -43,5 +43,5 @@ murphy export-scalar-sft-dataset \
 - Add a weekly scheduled ScalarLM dataset export after enough resolutions exist.
 - Expand ticker coverage slowly once AAPL has a complete prediction-resolution
   cycle.
-- Add historical/logistic baselines alongside the option-implied prior and
-  BLF-style posterior.
+- Add a trained logistic live prior once enough resolved labels exist; the
+  guarded historical empirical prior is already wired into prompts and traces.
