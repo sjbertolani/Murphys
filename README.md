@@ -141,10 +141,8 @@ murphy evaluation-report --backend cloud-sql --ticker AAPL
 Write an offline analysis report:
 
 ```bash
-murphy export-cloud-sql-to-duckdb --duckdb data/murphy_offline.duckdb
-murphy analysis-report \
-  --backend duckdb \
-  --db data/murphy_offline.duckdb \
+murphy offline-analysis \
+  --duckdb data/murphy_offline.duckdb \
   --output data/offline_analysis_report.md \
   --test-fraction 0.2
 ```
@@ -152,6 +150,16 @@ murphy analysis-report \
 The analysis report includes a grouped train/test readiness summary using the
 same `symbol|resolution_due|strike` contract boundary as the ScalarLM split
 export.
+
+The two underlying steps are also available separately:
+
+```bash
+murphy export-cloud-sql-to-duckdb --duckdb data/murphy_offline.duckdb
+murphy analysis-report \
+  --backend duckdb \
+  --db data/murphy_offline.duckdb \
+  --output data/offline_analysis_report.md
+```
 
 Mirror Cloud SQL to BigQuery:
 

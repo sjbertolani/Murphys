@@ -2173,6 +2173,52 @@ def _operational_status_duckdb(conn) -> dict:
           AND q.resolution_due <= current_timestamp
         """
     ).fetchone()[0]
+    next_resolution_due = conn.execute(
+        """
+        SELECT min(q.resolution_due)
+        FROM live_questions q
+        LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+        WHERE r.question_id IS NULL
+        """
+    ).fetchone()[0]
+    due_today = conn.execute(
+        """
+        SELECT count(*)
+        FROM live_questions q
+        LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+        WHERE r.question_id IS NULL
+          AND CAST(q.resolution_due AS DATE) = current_date
+        """
+    ).fetchone()[0]
+    due_next_24h = conn.execute(
+        """
+        SELECT count(*)
+        FROM live_questions q
+        LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+        WHERE r.question_id IS NULL
+          AND q.resolution_due > current_timestamp
+          AND q.resolution_due <= current_timestamp + INTERVAL 1 DAY
+        """
+    ).fetchone()[0]
+    due_next_72h = conn.execute(
+        """
+        SELECT count(*)
+        FROM live_questions q
+        LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+        WHERE r.question_id IS NULL
+          AND q.resolution_due > current_timestamp
+          AND q.resolution_due <= current_timestamp + INTERVAL 3 DAY
+        """
+    ).fetchone()[0]
+    oldest_due_unresolved = conn.execute(
+        """
+        SELECT min(q.resolution_due)
+        FROM live_questions q
+        LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+        WHERE r.question_id IS NULL
+          AND q.resolution_due <= current_timestamp
+        """
+    ).fetchone()[0]
     prediction_count, latest_prediction = conn.execute(
         "SELECT count(*), max(created_at) FROM llm_responses"
     ).fetchone()
@@ -2210,6 +2256,11 @@ def _operational_status_duckdb(conn) -> dict:
         total_questions=total_questions,
         status_counts=status_counts,
         due_unresolved=due_unresolved,
+        next_resolution_due=next_resolution_due,
+        due_today=due_today,
+        due_next_24h=due_next_24h,
+        due_next_72h=due_next_72h,
+        oldest_due_unresolved=oldest_due_unresolved,
         prediction_count=prediction_count,
         latest_prediction=latest_prediction,
         resolution_count=resolution_count,
@@ -2239,6 +2290,62 @@ def _operational_status_postgres(conn, sqlalchemy) -> dict:
         sqlalchemy.text(
             """
             SELECT count(*)
+            FROM live_questions q
+            LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+            WHERE r.question_id IS NULL
+              AND q.resolution_due <= now()
+            """
+        )
+    ).fetchone()[0]
+    next_resolution_due = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT min(q.resolution_due)
+            FROM live_questions q
+            LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+            WHERE r.question_id IS NULL
+            """
+        )
+    ).fetchone()[0]
+    due_today = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT count(*)
+            FROM live_questions q
+            LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+            WHERE r.question_id IS NULL
+              AND CAST(q.resolution_due AS DATE) = current_date
+            """
+        )
+    ).fetchone()[0]
+    due_next_24h = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT count(*)
+            FROM live_questions q
+            LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+            WHERE r.question_id IS NULL
+              AND q.resolution_due > now()
+              AND q.resolution_due <= now() + interval '1 day'
+            """
+        )
+    ).fetchone()[0]
+    due_next_72h = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT count(*)
+            FROM live_questions q
+            LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+            WHERE r.question_id IS NULL
+              AND q.resolution_due > now()
+              AND q.resolution_due <= now() + interval '3 day'
+            """
+        )
+    ).fetchone()[0]
+    oldest_due_unresolved = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT min(q.resolution_due)
             FROM live_questions q
             LEFT JOIN live_resolutions r ON r.question_id = q.question_id
             WHERE r.question_id IS NULL
@@ -2292,6 +2399,11 @@ def _operational_status_postgres(conn, sqlalchemy) -> dict:
         total_questions=total_questions,
         status_counts=status_counts,
         due_unresolved=due_unresolved,
+        next_resolution_due=next_resolution_due,
+        due_today=due_today,
+        due_next_24h=due_next_24h,
+        due_next_72h=due_next_72h,
+        oldest_due_unresolved=oldest_due_unresolved,
         prediction_count=prediction_count,
         latest_prediction=latest_prediction,
         resolution_count=resolution_count,
@@ -2311,6 +2423,11 @@ def _operational_status_payload(
     total_questions,
     status_counts,
     due_unresolved,
+    next_resolution_due,
+    due_today,
+    due_next_24h,
+    due_next_72h,
+    oldest_due_unresolved,
     prediction_count,
     latest_prediction,
     resolution_count,
@@ -2333,6 +2450,13 @@ def _operational_status_payload(
             "total": int(total_questions or 0),
             "status_counts": {str(key): int(value) for key, value in status_counts.items()},
             "due_unresolved": int(due_unresolved or 0),
+        },
+        "resolution_readiness": {
+            "next_resolution_due": next_resolution_due,
+            "due_today": int(due_today or 0),
+            "due_next_24h": int(due_next_24h or 0),
+            "due_next_72h": int(due_next_72h or 0),
+            "oldest_due_unresolved": oldest_due_unresolved,
         },
         "llm_responses": {
             "count": int(prediction_count or 0),

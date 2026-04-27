@@ -191,6 +191,19 @@ def main() -> None:
     analysis_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
     analysis_parser.add_argument("--output", default="data/offline_analysis_report.md")
 
+    offline_analysis_parser = subparsers.add_parser(
+        "offline-analysis",
+        help="Export Cloud SQL to DuckDB and write the offline analysis report.",
+    )
+    offline_analysis_parser.add_argument("--duckdb", default="data/murphy_offline.duckdb")
+    offline_analysis_parser.add_argument("--ticker", default=None)
+    offline_analysis_parser.add_argument("--limit", type=int, default=10000)
+    offline_analysis_parser.add_argument("--resolved-only", action="store_true")
+    offline_analysis_parser.add_argument("--test-fraction", type=float, default=0.2)
+    offline_analysis_parser.add_argument("--validation-fraction", type=float, default=0.0)
+    offline_analysis_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    offline_analysis_parser.add_argument("--output", default="data/offline_analysis_report.md")
+
     scalar_export_parser = subparsers.add_parser(
         "export-scalar-sft-dataset",
         help="Export resolved, leakage-checked live predictions as ScalarLM SFT JSONL.",
@@ -470,6 +483,38 @@ def main() -> None:
             )
         else:
             output_path.write_text(render_markdown_report(report), encoding="utf-8")
+        print(f"wrote analysis report to {output_path}")
+        return
+
+    if args.command == "offline-analysis":
+        config = load_cloud_config_from_env()
+        if config.cloud_sql is None:
+            raise ValueError("Cloud SQL env vars are not configured")
+        counts = export_cloud_sql_to_duckdb(config.cloud_sql, args.duckdb)
+        repository = DuckDbRepository(args.duckdb)
+        try:
+            report = build_analysis_report(
+                repository,
+                ticker=args.ticker,
+                limit=args.limit,
+                include_unresolved=not args.resolved_only,
+                test_fraction=args.test_fraction,
+                validation_fraction=args.validation_fraction,
+            )
+        finally:
+            repository.close()
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if args.format == "json":
+            output_path.write_text(
+                json.dumps(report, default=str, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            output_path.write_text(render_markdown_report(report), encoding="utf-8")
+        print("exported Cloud SQL tables to DuckDB:")
+        for table, count in counts.items():
+            print(f"{table}: {count}")
         print(f"wrote analysis report to {output_path}")
         return
 

@@ -16,11 +16,14 @@ EXPORT_TABLES = [
     "live_questions",
     "llm_responses",
     "live_resolutions",
+    "agent_trials",
+    "agent_steps",
     "daily_runs",
     "external_call_cache",
 ]
 
 JSON_COLUMNS = {
+    "agent_steps": ["action_json", "belief_json"],
     "daily_runs": ["details_json"],
     "external_call_cache": ["request_json", "response_json"],
 }

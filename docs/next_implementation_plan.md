@@ -51,6 +51,9 @@ murphy export-scalar-sft-dataset \
 
 ## 3. Near-Term Follow Ups
 
+- Use `murphy offline-analysis` as the standard local research refresh command.
+  It exports Cloud SQL to DuckDB and writes the grouped-split analysis report in
+  one pass.
 - Treat each hourly market snapshot as a distinct forecast instance. The plain
   English question can repeat for the same ticker/strike/expiry, but the option
   price, spot, IV, volume/open interest, cached web context, prompt, and LLM

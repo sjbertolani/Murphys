@@ -52,6 +52,10 @@ def test_duckdb_repository_operational_status(tmp_path) -> None:
         assert status["underlying_bars"]["count"] == 1
         assert status["live_questions"]["total"] == 1
         assert status["live_questions"]["status_counts"]["pending_prediction"] == 1
+        assert status["resolution_readiness"]["next_resolution_due"] is not None
+        assert status["resolution_readiness"]["due_today"] == 0
+        assert status["resolution_readiness"]["due_next_24h"] == 0
+        assert status["resolution_readiness"]["oldest_due_unresolved"] is None
     finally:
         repo.close()
 
