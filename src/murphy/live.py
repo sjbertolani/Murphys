@@ -61,6 +61,9 @@ def generate_live_questions_from_snapshots(
     import duckdb
 
     del max_abs_moneyness
+    effective_max_questions_per_ticker = (
+        max_questions if max_questions_per_ticker is None else max_questions_per_ticker
+    )
     con = duckdb.connect(db_path)
     try:
         rows = con.execute(
@@ -124,7 +127,7 @@ def generate_live_questions_from_snapshots(
               symbol, option_symbol, quote_timestamp, expiration, strike, spot, dte, moneyness
             FROM ranked
             WHERE strike_side_rank <= ?
-              AND (? IS NULL OR symbol_question_rank <= ?)
+              AND symbol_question_rank <= ?
             ORDER BY symbol_question_rank, symbol, expiration, strike_side_rank, strike_side, strike
             LIMIT ?
             """,
@@ -135,8 +138,7 @@ def generate_live_questions_from_snapshots(
                 min_volume,
                 strike_window_size,
                 strike_window_size,
-                max_questions_per_ticker,
-                max_questions_per_ticker,
+                effective_max_questions_per_ticker,
                 max_questions,
             ],
         ).fetchall()
