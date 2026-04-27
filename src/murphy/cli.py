@@ -5,9 +5,14 @@ import json
 from pathlib import Path
 
 from murphy.baselines import run_baselines
-from murphy.bigquery import initialize_bigquery_dataset, mirror_cloud_sql_to_bigquery
+from murphy.bigquery import (
+    bigquery_table_freshness,
+    initialize_bigquery_dataset,
+    mirror_cloud_sql_to_bigquery,
+)
 from murphy.cloud_config import load_cloud_config_from_env
 from murphy.cloud_sql import initialize_cloud_sql
+from murphy.cloud_storage import upload_file_to_gcs
 from murphy.db import MurphyDb
 from murphy.external_options import (
     DEFAULT_OPTIONS_DB,
@@ -21,6 +26,7 @@ from murphy.live import (
 )
 from murphy.market_data.collect import collect_market_snapshots, provider_from_name
 from murphy.offline_export import export_cloud_sql_to_duckdb
+from murphy.operational_status import build_operational_status_report
 from murphy.predict import DeterministicPredictor, OpenAiPredictor, predict_pending
 from murphy.repository import CloudSqlRepository, DuckDbRepository
 from murphy.training.datasets import scalar_sft_dataset_from_report, write_jsonl
@@ -167,7 +173,18 @@ def main() -> None:
     scalar_export_parser.add_argument("--ticker", default=None)
     scalar_export_parser.add_argument("--limit", type=int, default=10000)
     scalar_export_parser.add_argument("--output", default="data/scalar_sft_resolved.jsonl")
+    scalar_export_parser.add_argument("--gcs-uri", default=None)
     scalar_export_parser.add_argument("--allow-leakage-check-failures", action="store_true")
+
+    status_parser = subparsers.add_parser(
+        "daily-status",
+        help="Print an operational JSON status report with warnings.",
+    )
+    status_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
+    status_parser.add_argument("--db", default="data/murphy.duckdb")
+    status_parser.add_argument("--include-bigquery", action="store_true")
+    status_parser.add_argument("--max-snapshot-age-hours", type=float, default=6.0)
+    status_parser.add_argument("--max-bigquery-age-hours", type=float, default=24.0)
 
     cloud_parser = subparsers.add_parser(
         "init-cloud",
@@ -375,6 +392,30 @@ def main() -> None:
         )
         count = write_jsonl(rows, args.output)
         print(f"exported {count} ScalarLM SFT rows to {args.output}")
+        if args.gcs_uri:
+            uploaded_uri = upload_file_to_gcs(args.output, args.gcs_uri)
+            print(f"uploaded ScalarLM SFT rows to {uploaded_uri}")
+        return
+
+    if args.command == "daily-status":
+        repository = _repository_for_backend(args.backend, args.db)
+        try:
+            repository_status = repository.operational_status()
+        finally:
+            repository.close()
+        bigquery_status = None
+        if args.include_bigquery:
+            config = load_cloud_config_from_env()
+            if config.bigquery is None:
+                raise ValueError("BigQuery env vars are not configured")
+            bigquery_status = bigquery_table_freshness(config.bigquery)
+        report = build_operational_status_report(
+            repository_status,
+            bigquery_status=bigquery_status,
+            max_snapshot_age_hours=args.max_snapshot_age_hours,
+            max_bigquery_age_hours=args.max_bigquery_age_hours,
+        )
+        print(json.dumps(report, default=str, indent=2, sort_keys=True))
         return
 
     if args.command == "init-cloud":

@@ -218,6 +218,25 @@ def mirror_cloud_sql_to_bigquery(
     return counts
 
 
+def bigquery_table_freshness(
+    config: BigQueryConfig,
+    tables: list[str] | None = None,
+) -> dict[str, dict[str, object]]:
+    """Return BigQuery table metadata useful for operational status reports."""
+    from google.cloud import bigquery
+
+    client = bigquery.Client(project=config.project_id, location=config.location)
+    selected_tables = _validate_table_names(tables or MIRROR_TABLES)
+    freshness: dict[str, dict[str, object]] = {}
+    for table in selected_tables:
+        metadata = client.get_table(table_id(config, table))
+        freshness[table] = {
+            "num_rows": metadata.num_rows,
+            "modified": metadata.modified,
+        }
+    return freshness
+
+
 def normalize_dataframe_for_bigquery(table: str, dataframe):
     """Select schema columns and encode JSON-like values as stable strings."""
     normalized = dataframe.copy()

@@ -218,6 +218,9 @@ class DuckDbRepository:
     ) -> dict:
         return _evaluation_report_duckdb(self.db.conn, ticker, limit, include_unresolved)
 
+    def operational_status(self) -> dict:
+        return _operational_status_duckdb(self.db.conn)
+
 
 class CloudSqlRepository:
     def __init__(self, config: CloudSqlConfig) -> None:
@@ -692,6 +695,12 @@ class CloudSqlRepository:
                 limit,
                 include_unresolved,
             )
+
+    def operational_status(self) -> dict:
+        import sqlalchemy
+
+        with self.engine.begin() as conn:
+            return _operational_status_postgres(conn, sqlalchemy)
 
 
 def _bar_row(bar: UnderlyingBar) -> tuple:
@@ -1593,6 +1602,207 @@ def _build_evaluation_report(
             "accuracy_at_0_5": accuracy,
         },
         "predictions": items,
+    }
+
+
+def _operational_status_duckdb(conn) -> dict:
+    option_count, latest_option = conn.execute(
+        "SELECT count(*), max(quote_timestamp) FROM option_chain_snapshots"
+    ).fetchone()
+    bar_count, latest_bar = conn.execute(
+        "SELECT count(*), max(timestamp) FROM underlying_bars"
+    ).fetchone()
+    total_questions = conn.execute("SELECT count(*) FROM live_questions").fetchone()[0]
+    status_counts = {
+        status: count
+        for status, count in conn.execute(
+            "SELECT status, count(*) FROM live_questions GROUP BY status"
+        ).fetchall()
+    }
+    due_unresolved = conn.execute(
+        """
+        SELECT count(*)
+        FROM live_questions q
+        LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+        WHERE r.question_id IS NULL
+          AND q.resolution_due <= current_timestamp
+        """
+    ).fetchone()[0]
+    prediction_count, latest_prediction = conn.execute(
+        "SELECT count(*), max(created_at) FROM llm_responses"
+    ).fetchone()
+    resolution_count, latest_resolution = conn.execute(
+        "SELECT count(*), max(resolved_at) FROM live_resolutions"
+    ).fetchone()
+    cache_count, latest_cache = conn.execute(
+        "SELECT count(*), max(captured_at) FROM external_call_cache"
+    ).fetchone()
+    cache_type_counts = {
+        call_type: count
+        for call_type, count in conn.execute(
+            "SELECT call_type, count(*) FROM external_call_cache GROUP BY call_type"
+        ).fetchall()
+    }
+    latest_runs = [
+        {"run_type": run_type, "started_at": started_at, "completed_at": completed_at, "status": status}
+        for run_type, started_at, completed_at, status in conn.execute(
+            """
+            SELECT run_type, started_at, completed_at, status
+            FROM (
+              SELECT *, row_number() OVER (PARTITION BY run_type ORDER BY started_at DESC) AS rn
+              FROM daily_runs
+            )
+            WHERE rn = 1
+            ORDER BY run_type
+            """
+        ).fetchall()
+    ]
+    return _operational_status_payload(
+        option_count=option_count,
+        latest_option=latest_option,
+        bar_count=bar_count,
+        latest_bar=latest_bar,
+        total_questions=total_questions,
+        status_counts=status_counts,
+        due_unresolved=due_unresolved,
+        prediction_count=prediction_count,
+        latest_prediction=latest_prediction,
+        resolution_count=resolution_count,
+        latest_resolution=latest_resolution,
+        cache_count=cache_count,
+        latest_cache=latest_cache,
+        cache_type_counts=cache_type_counts,
+        latest_runs=latest_runs,
+    )
+
+
+def _operational_status_postgres(conn, sqlalchemy) -> dict:
+    option_count, latest_option = conn.execute(
+        sqlalchemy.text("SELECT count(*), max(quote_timestamp) FROM option_chain_snapshots")
+    ).fetchone()
+    bar_count, latest_bar = conn.execute(
+        sqlalchemy.text("SELECT count(*), max(timestamp) FROM underlying_bars")
+    ).fetchone()
+    total_questions = conn.execute(sqlalchemy.text("SELECT count(*) FROM live_questions")).fetchone()[0]
+    status_counts = {
+        row.status: row[1]
+        for row in conn.execute(
+            sqlalchemy.text("SELECT status, count(*) FROM live_questions GROUP BY status")
+        ).fetchall()
+    }
+    due_unresolved = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT count(*)
+            FROM live_questions q
+            LEFT JOIN live_resolutions r ON r.question_id = q.question_id
+            WHERE r.question_id IS NULL
+              AND q.resolution_due <= now()
+            """
+        )
+    ).fetchone()[0]
+    prediction_count, latest_prediction = conn.execute(
+        sqlalchemy.text("SELECT count(*), max(created_at) FROM llm_responses")
+    ).fetchone()
+    resolution_count, latest_resolution = conn.execute(
+        sqlalchemy.text("SELECT count(*), max(resolved_at) FROM live_resolutions")
+    ).fetchone()
+    cache_count, latest_cache = conn.execute(
+        sqlalchemy.text("SELECT count(*), max(captured_at) FROM external_call_cache")
+    ).fetchone()
+    cache_type_counts = {
+        row.call_type: row[1]
+        for row in conn.execute(
+            sqlalchemy.text("SELECT call_type, count(*) FROM external_call_cache GROUP BY call_type")
+        ).fetchall()
+    }
+    latest_runs = [
+        {
+            "run_type": row.run_type,
+            "started_at": row.started_at,
+            "completed_at": row.completed_at,
+            "status": row.status,
+        }
+        for row in conn.execute(
+            sqlalchemy.text(
+                """
+                SELECT run_type, started_at, completed_at, status
+                FROM (
+                  SELECT
+                    run_type, started_at, completed_at, status,
+                    row_number() OVER (PARTITION BY run_type ORDER BY started_at DESC) AS rn
+                  FROM daily_runs
+                ) latest
+                WHERE rn = 1
+                ORDER BY run_type
+                """
+            )
+        ).fetchall()
+    ]
+    return _operational_status_payload(
+        option_count=option_count,
+        latest_option=latest_option,
+        bar_count=bar_count,
+        latest_bar=latest_bar,
+        total_questions=total_questions,
+        status_counts=status_counts,
+        due_unresolved=due_unresolved,
+        prediction_count=prediction_count,
+        latest_prediction=latest_prediction,
+        resolution_count=resolution_count,
+        latest_resolution=latest_resolution,
+        cache_count=cache_count,
+        latest_cache=latest_cache,
+        cache_type_counts=cache_type_counts,
+        latest_runs=latest_runs,
+    )
+
+
+def _operational_status_payload(
+    option_count,
+    latest_option,
+    bar_count,
+    latest_bar,
+    total_questions,
+    status_counts,
+    due_unresolved,
+    prediction_count,
+    latest_prediction,
+    resolution_count,
+    latest_resolution,
+    cache_count,
+    latest_cache,
+    cache_type_counts,
+    latest_runs,
+) -> dict:
+    return {
+        "option_snapshots": {
+            "count": int(option_count or 0),
+            "latest": latest_option,
+        },
+        "underlying_bars": {
+            "count": int(bar_count or 0),
+            "latest": latest_bar,
+        },
+        "live_questions": {
+            "total": int(total_questions or 0),
+            "status_counts": {str(key): int(value) for key, value in status_counts.items()},
+            "due_unresolved": int(due_unresolved or 0),
+        },
+        "llm_responses": {
+            "count": int(prediction_count or 0),
+            "latest": latest_prediction,
+        },
+        "live_resolutions": {
+            "count": int(resolution_count or 0),
+            "latest": latest_resolution,
+        },
+        "external_call_cache": {
+            "count": int(cache_count or 0),
+            "latest": latest_cache,
+            "call_type_counts": {str(key): int(value) for key, value in cache_type_counts.items()},
+        },
+        "daily_runs": latest_runs,
     }
 
 
