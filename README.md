@@ -20,6 +20,8 @@ Question generation now uses a short-term strike ladder:
 - For each ticker and expiry, select up to 5 call strikes below the current spot price.
 - Also select up to 5 call strikes at or above the current spot price.
 - Each selected strike becomes a binary question for that forecast timestamp.
+- Production uses `--max-questions-per-ticker=5` with a global `--max-questions=30`
+  so the six-ticker set is balanced each run.
 
 Important dataset rule: the same English question may repeat, but each hourly market snapshot is a distinct forecast instance. The identity is effectively ticker/option/strike/expiry plus forecast-hour information cutoff. This preserves changing option prices, spot, IV, volume/open interest, cached context, prompt, and LLM response over time.
 
@@ -169,7 +171,7 @@ murphy export-scalar-sft-dataset \
 
 ## Verified So Far
 
-- Full test suite passes: `39 passed`.
+- Full test suite passes: `40 passed`.
 - Cloud Run `murphy-daily-status` executed successfully.
 - Cloud Run `murphy-scalar-sft-export` executed successfully and uploaded an expected empty JSONL while there are no resolved labels yet.
 - BigQuery mirror has been verified with live row counts.

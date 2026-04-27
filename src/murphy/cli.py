@@ -82,6 +82,7 @@ def main() -> None:
     live_parser.add_argument("--min-open-interest", type=float, default=1.0)
     live_parser.add_argument("--min-volume", type=float, default=0.0)
     live_parser.add_argument("--strike-window-size", type=int, default=5)
+    live_parser.add_argument("--max-questions-per-ticker", type=int, default=None)
 
     prompt_parser = subparsers.add_parser(
         "export-pending-prompts",
@@ -145,6 +146,7 @@ def main() -> None:
     cycle_parser.add_argument("--lookback-days", type=int, default=10)
     cycle_parser.add_argument("--max-questions", type=int, default=50)
     cycle_parser.add_argument("--strike-window-size", type=int, default=5)
+    cycle_parser.add_argument("--max-questions-per-ticker", type=int, default=None)
     cycle_parser.add_argument("--model", default="gpt-4.1-mini")
     cycle_parser.add_argument("--prediction-limit", type=int, default=None)
     cycle_parser.add_argument("--dry-run", action="store_true")
@@ -248,6 +250,7 @@ def main() -> None:
             min_open_interest=args.min_open_interest,
             min_volume=args.min_volume,
             strike_window_size=args.strike_window_size,
+            max_questions_per_ticker=args.max_questions_per_ticker,
         )
         print(f"generated {len(questions)} live questions")
         for question in questions[:5]:
@@ -371,6 +374,7 @@ def main() -> None:
                 max_dte=args.max_dte,
                 max_questions=args.max_questions,
                 strike_window_size=args.strike_window_size,
+                max_questions_per_ticker=args.max_questions_per_ticker,
             )
             predictor = (
                 DeterministicPredictor(model="dry-run")

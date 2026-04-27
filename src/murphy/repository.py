@@ -125,6 +125,7 @@ class DuckDbRepository:
         min_open_interest: float = 1.0,
         min_volume: float = 0.0,
         strike_window_size: int = 5,
+        max_questions_per_ticker: int | None = None,
         source: str = "live_option_chain",
     ) -> list[LiveQuestion]:
         return _generate_live_questions_duckdb(
@@ -136,6 +137,7 @@ class DuckDbRepository:
             min_open_interest,
             min_volume,
             strike_window_size,
+            max_questions_per_ticker,
             source,
         )
 
@@ -383,6 +385,7 @@ class CloudSqlRepository:
         min_open_interest: float = 1.0,
         min_volume: float = 0.0,
         strike_window_size: int = 5,
+        max_questions_per_ticker: int | None = None,
         source: str = "live_option_chain",
     ) -> list[LiveQuestion]:
         import sqlalchemy
@@ -438,12 +441,30 @@ class CloudSqlRepository:
                     AND date_trunc('hour', e.forecast_timestamp)
                         = date_trunc('hour', s.quote_timestamp)
                 )
+            ),
+            ladder AS (
+              SELECT *
+              FROM candidates
+              WHERE strike_side_rank <= :strike_window_size
+            ),
+            ranked AS (
+              SELECT
+                *,
+                row_number() OVER (
+                  PARTITION BY symbol
+                  ORDER BY expiration, strike_side_rank, strike_side, strike
+                ) AS symbol_question_rank
+              FROM ladder
             )
             SELECT
               symbol, option_symbol, quote_timestamp, expiration, strike, spot, dte, moneyness
-            FROM candidates
+            FROM ranked
             WHERE strike_side_rank <= :strike_window_size
-            ORDER BY expiration, strike_side_rank, strike_side, symbol, strike
+              AND (
+                :max_questions_per_ticker IS NULL
+                OR symbol_question_rank <= :max_questions_per_ticker
+              )
+            ORDER BY symbol_question_rank, symbol, expiration, strike_side_rank, strike_side, strike
             LIMIT :max_questions
             """
         )
@@ -457,6 +478,7 @@ class CloudSqlRepository:
                     "min_open_interest": min_open_interest,
                     "min_volume": min_volume,
                     "strike_window_size": strike_window_size,
+                    "max_questions_per_ticker": max_questions_per_ticker,
                     "max_questions": max_questions,
                 },
             ).fetchall()
@@ -1336,6 +1358,7 @@ def _generate_live_questions_duckdb(
     min_open_interest: float,
     min_volume: float,
     strike_window_size: int,
+    max_questions_per_ticker: int | None,
     source: str,
 ) -> list[LiveQuestion]:
     del max_abs_moneyness
@@ -1381,15 +1404,40 @@ def _generate_live_questions_duckdb(
                 AND date_trunc('hour', e.forecast_timestamp)
                     = date_trunc('hour', s.quote_timestamp)
             )
+        ),
+        ladder AS (
+          SELECT *
+          FROM candidates
+          WHERE strike_side_rank <= ?
+        ),
+        ranked AS (
+          SELECT
+            *,
+            row_number() OVER (
+              PARTITION BY symbol
+              ORDER BY expiration, strike_side_rank, strike_side, strike
+            ) AS symbol_question_rank
+          FROM ladder
         )
         SELECT
           symbol, option_symbol, quote_timestamp, expiration, strike, spot, dte, moneyness
-        FROM candidates
+        FROM ranked
         WHERE strike_side_rank <= ?
-        ORDER BY expiration, strike_side_rank, strike_side, symbol, strike
+          AND (? IS NULL OR symbol_question_rank <= ?)
+        ORDER BY symbol_question_rank, symbol, expiration, strike_side_rank, strike_side, strike
         LIMIT ?
         """,
-        [min_dte, max_dte, min_open_interest, min_volume, strike_window_size, max_questions],
+        [
+            min_dte,
+            max_dte,
+            min_open_interest,
+            min_volume,
+            strike_window_size,
+            strike_window_size,
+            max_questions_per_ticker,
+            max_questions_per_ticker,
+            max_questions,
+        ],
     ).fetchall()
 
     questions = [_live_question_from_candidate(row) for row in rows]

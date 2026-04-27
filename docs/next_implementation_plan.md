@@ -14,6 +14,8 @@ Current live question generation rule:
 - Fetch expiries from 0 to 14 days out.
 - For each ticker/expiry, generate questions for up to 5 call strikes below
   current spot and up to 5 call strikes at or above current spot.
+- Cap production generation at 5 questions per ticker per run, with a global
+  30-question cap across the six-ticker set.
 - Keep each hourly market snapshot as a distinct forecast instance, even when
   the plain-English question repeats.
 

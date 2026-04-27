@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -335,6 +336,48 @@ def test_duckdb_repository_generates_strike_ladder_around_spot(tmp_path) -> None
         strikes = sorted(question.strike for question in questions)
         assert strikes == [75, 80, 85, 90, 95, 100, 105, 110, 115, 120]
         assert all(question.expiration.date() == expiration.date() for question in questions)
+    finally:
+        repo.close()
+
+
+def test_duckdb_repository_balances_question_cap_per_ticker(tmp_path) -> None:
+    db_path = tmp_path / "murphy.duckdb"
+    quote_time = datetime(2026, 4, 27, 16, 0, tzinfo=timezone.utc)
+    expiration = quote_time + timedelta(days=7)
+    repo = DuckDbRepository(db_path)
+    try:
+        snapshots = []
+        for symbol, spot in [("AAPL", 100.0), ("MSFT", 200.0)]:
+            for offset in range(-5, 6):
+                strike = spot + offset * 5
+                snapshots.append(
+                    OptionSnapshot(
+                        symbol=symbol,
+                        option_symbol=f"{symbol}260504C{int(strike * 1000):08d}",
+                        quote_timestamp=quote_time,
+                        expiration=expiration,
+                        strike=strike,
+                        right=OptionRight.CALL,
+                        bid=1.0,
+                        ask=1.2,
+                        mid=1.1,
+                        implied_volatility=0.3,
+                        volume=10,
+                        open_interest=100,
+                        spot=spot,
+                    )
+                )
+        repo.insert_option_snapshots(snapshots)
+
+        questions = repo.generate_live_questions(
+            min_dte=0,
+            max_dte=14,
+            max_questions=6,
+            strike_window_size=5,
+            max_questions_per_ticker=3,
+        )
+
+        assert Counter(question.symbol for question in questions) == {"AAPL": 3, "MSFT": 3}
     finally:
         repo.close()
 
