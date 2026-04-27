@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Protocol
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
 
@@ -47,7 +47,8 @@ class YahooFinanceNewsProvider:
     def _fetch_one(self, ticker: str, limit_per_ticker: int) -> list[NewsContextItem]:
         query = urlencode({"s": ticker, "region": "US", "lang": "en-US"})
         url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?{query}"
-        with urlopen(url, timeout=15) as response:
+        request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(request, timeout=15) as response:
             payload = response.read()
         root = ElementTree.fromstring(payload)
         parsed: list[NewsContextItem] = []
