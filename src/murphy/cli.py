@@ -23,6 +23,7 @@ from murphy.market_data.collect import collect_market_snapshots, provider_from_n
 from murphy.offline_export import export_cloud_sql_to_duckdb
 from murphy.predict import DeterministicPredictor, OpenAiPredictor, predict_pending
 from murphy.repository import CloudSqlRepository, DuckDbRepository
+from murphy.training.datasets import scalar_sft_dataset_from_report, write_jsonl
 
 
 def main() -> None:
@@ -156,6 +157,17 @@ def main() -> None:
     eval_report_parser.add_argument("--ticker", default=None)
     eval_report_parser.add_argument("--limit", type=int, default=50)
     eval_report_parser.add_argument("--resolved-only", action="store_true")
+
+    scalar_export_parser = subparsers.add_parser(
+        "export-scalar-sft-dataset",
+        help="Export resolved, leakage-checked live predictions as ScalarLM SFT JSONL.",
+    )
+    scalar_export_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
+    scalar_export_parser.add_argument("--db", default="data/murphy.duckdb")
+    scalar_export_parser.add_argument("--ticker", default=None)
+    scalar_export_parser.add_argument("--limit", type=int, default=10000)
+    scalar_export_parser.add_argument("--output", default="data/scalar_sft_resolved.jsonl")
+    scalar_export_parser.add_argument("--allow-leakage-check-failures", action="store_true")
 
     cloud_parser = subparsers.add_parser(
         "init-cloud",
@@ -345,6 +357,24 @@ def main() -> None:
         finally:
             repository.close()
         print(json.dumps(report, default=str, indent=2, sort_keys=True))
+        return
+
+    if args.command == "export-scalar-sft-dataset":
+        repository = _repository_for_backend(args.backend, args.db)
+        try:
+            report = repository.evaluation_report(
+                ticker=args.ticker,
+                limit=args.limit,
+                include_unresolved=False,
+            )
+        finally:
+            repository.close()
+        rows = scalar_sft_dataset_from_report(
+            report,
+            require_leakage_checks=not args.allow_leakage_check_failures,
+        )
+        count = write_jsonl(rows, args.output)
+        print(f"exported {count} ScalarLM SFT rows to {args.output}")
         return
 
     if args.command == "init-cloud":
