@@ -59,10 +59,13 @@ murphy export-scalar-sft-dataset \
   `murphy export-scalar-sft-splits`. The grouping boundary is
   `symbol|resolution_due|strike`, so repeated hourly rows for the same option
   contract cannot cross train/test splits.
+- Include the same grouped split readiness summary in `murphy analysis-report`
+  so reports show eligible rows, excluded rows, split row counts, and contract
+  group counts before any ScalarLM training run.
 - Add notification channels to the GCP log-based alert policies.
 - Add a weekly scheduled ScalarLM dataset export after enough resolutions exist.
 - Use the expanded liquid ticker set cautiously and monitor Yahoo/OpenAI cost.
 - Add a trained logistic live prior once enough resolved labels exist; the
   guarded historical empirical prior is already wired into prompts and traces.
-- Extend `murphy analysis-report` with plots and grouped split summaries for
+- Extend `murphy analysis-report` with plots and model-comparison tables for
   ScalarLM experiments.

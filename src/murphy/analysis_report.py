@@ -4,6 +4,8 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from statistics import mean
 
+from murphy.training.datasets import grouped_prediction_splits
+
 
 def build_analysis_report(
     repository,
@@ -11,6 +13,8 @@ def build_analysis_report(
     ticker: str | None = None,
     limit: int = 10000,
     include_unresolved: bool = True,
+    test_fraction: float = 0.2,
+    validation_fraction: float = 0.0,
     generated_at: datetime | None = None,
 ) -> dict:
     """Build an offline analysis summary from cached live forecast rows."""
@@ -37,6 +41,11 @@ def build_analysis_report(
             "posterior_probability": _calibration_bins(resolved, "posterior_probability"),
         },
         "repeated_questions": _repeated_questions(predictions),
+        "grouped_split": _grouped_split_summary(
+            predictions,
+            test_fraction=test_fraction,
+            validation_fraction=validation_fraction,
+        ),
         "leakage_failures": leakage_failures[:25],
         "dataset_notes": _dataset_notes(evaluation["summary"], predictions, leakage_failures),
     }
@@ -87,6 +96,29 @@ def render_markdown_report(report: dict) -> str:
         ]
     )
     lines.extend(["", "## Repeated Questions", "", _table(report["repeated_questions"][:20])])
+    split = report["grouped_split"]
+    lines.extend(
+        [
+            "",
+            "## Grouped Dataset Split",
+            "",
+            f"Grouping rule: `{split['manifest']['grouping_rule']}`",
+            f"Test fraction: {_format_value(split['test_fraction'])}",
+            f"Validation fraction: {_format_value(split['validation_fraction'])}",
+            "",
+            "### Manifest",
+            "",
+            _table(_manifest_rows(split["manifest"])),
+            "",
+            "### Split Breakdown",
+            "",
+            _table(split["split_breakdown"]),
+        ]
+    )
+    if split["manifest"].get("warnings"):
+        lines.extend(["", "### Split Warnings", ""])
+        for warning in split["manifest"]["warnings"]:
+            lines.append(f"- {warning}")
     lines.extend(["", "## Dataset Notes", ""])
     for note in report["dataset_notes"]:
         lines.append(f"- {note}")
@@ -169,6 +201,93 @@ def _repeated_questions(predictions: list[dict]) -> list[dict]:
         if count <= 1:
             continue
         rows.append({"count": count, "question_text": question_text})
+    return rows
+
+
+def _grouped_split_summary(
+    predictions: list[dict],
+    *,
+    test_fraction: float,
+    validation_fraction: float,
+) -> dict:
+    eligible = [
+        item
+        for item in predictions
+        if item.get("label") is not None and all(item.get("leakage_checks", {}).values())
+    ]
+    annotated, manifest = grouped_prediction_splits(
+        eligible,
+        test_fraction=test_fraction,
+        validation_fraction=validation_fraction,
+    )
+    return {
+        "test_fraction": test_fraction,
+        "validation_fraction": validation_fraction,
+        "eligible_rows": len(eligible),
+        "excluded_rows": {
+            "unresolved": sum(1 for item in predictions if item.get("label") is None),
+            "leakage_failures": sum(
+                1
+                for item in predictions
+                if item.get("label") is not None
+                and not all(item.get("leakage_checks", {}).values())
+            ),
+        },
+        "manifest": manifest,
+        "split_breakdown": _split_breakdown(annotated, validation_fraction),
+    }
+
+
+def _split_breakdown(annotated: list[dict], validation_fraction: float) -> list[dict]:
+    split_order = ["train"]
+    if validation_fraction > 0:
+        split_order.append("validation")
+    split_order.append("test")
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for item in annotated:
+        grouped[str(item.get("dataset_split") or "train")].append(item)
+
+    rows = []
+    for split in split_order:
+        items = grouped.get(split, [])
+        groups = {item.get("contract_group_key") for item in items}
+        tickers = {str(item.get("symbol") or "UNKNOWN") for item in items}
+        labels = [item.get("label") for item in items if item.get("label") is not None]
+        rows.append(
+            {
+                "split": split,
+                "n_rows": len(items),
+                "n_contract_groups": len(groups),
+                "n_tickers": len(tickers),
+                "positive_rate": _average(labels),
+                "avg_probability": _average(item.get("probability") for item in items),
+                "avg_posterior_probability": _average(
+                    item.get("posterior_probability") for item in items
+                ),
+            }
+        )
+    return rows
+
+
+def _manifest_rows(manifest: dict) -> list[dict]:
+    row_counts = manifest.get("row_counts", {})
+    group_counts = manifest.get("contract_group_counts", {})
+    splits = sorted(set(row_counts) | set(group_counts))
+    rows = [
+        {
+            "metric": "total",
+            "rows": manifest.get("n_rows", 0),
+            "contract_groups": manifest.get("n_contract_groups", 0),
+        }
+    ]
+    for split in splits:
+        rows.append(
+            {
+                "metric": split,
+                "rows": row_counts.get(split, 0),
+                "contract_groups": group_counts.get(split, 0),
+            }
+        )
     return rows
 
 

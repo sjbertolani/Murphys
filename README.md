@@ -145,8 +145,13 @@ murphy export-cloud-sql-to-duckdb --duckdb data/murphy_offline.duckdb
 murphy analysis-report \
   --backend duckdb \
   --db data/murphy_offline.duckdb \
-  --output data/offline_analysis_report.md
+  --output data/offline_analysis_report.md \
+  --test-fraction 0.2
 ```
+
+The analysis report includes a grouped train/test readiness summary using the
+same `symbol|resolution_due|strike` contract boundary as the ScalarLM split
+export.
 
 Mirror Cloud SQL to BigQuery:
 
@@ -200,5 +205,5 @@ Near-term priorities:
 
 - Add notification channels to the GCP alert policies.
 - Add a trained logistic live prior once enough resolved labels exist; the guarded historical empirical prior is already wired in.
-- Extend `murphy analysis-report` with plots and grouped train/test split exports.
+- Extend `murphy analysis-report` with plots and model-comparison tables.
 - Use the grouped split exports for ScalarLM training and offline model comparisons.

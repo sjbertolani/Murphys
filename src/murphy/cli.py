@@ -186,6 +186,8 @@ def main() -> None:
     analysis_parser.add_argument("--ticker", default=None)
     analysis_parser.add_argument("--limit", type=int, default=10000)
     analysis_parser.add_argument("--resolved-only", action="store_true")
+    analysis_parser.add_argument("--test-fraction", type=float, default=0.2)
+    analysis_parser.add_argument("--validation-fraction", type=float, default=0.0)
     analysis_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
     analysis_parser.add_argument("--output", default="data/offline_analysis_report.md")
 
@@ -440,6 +442,8 @@ def main() -> None:
                 ticker=args.ticker,
                 limit=args.limit,
                 include_unresolved=not args.resolved_only,
+                test_fraction=args.test_fraction,
+                validation_fraction=args.validation_fraction,
             )
         finally:
             repository.close()
