@@ -169,9 +169,18 @@ murphy export-scalar-sft-dataset \
   --gcs-uri gs://murphys-494519-murphy-artifacts/scalar_sft/
 ```
 
+Export resolved ScalarLM rows into leakage-safe grouped train/test files:
+
+```bash
+murphy export-scalar-sft-splits \
+  --backend cloud-sql \
+  --output-dir data/scalar_sft_splits \
+  --test-fraction 0.2
+```
+
 ## Verified So Far
 
-- Full test suite passes: `40 passed`.
+- Full test suite passes: `43 passed`.
 - Cloud Run `murphy-daily-status` executed successfully.
 - Cloud Run `murphy-scalar-sft-export` executed successfully and uploaded an expected empty JSONL while there are no resolved labels yet.
 - BigQuery mirror has been verified with live row counts.
@@ -192,4 +201,4 @@ Near-term priorities:
 - Add notification channels to the GCP alert policies.
 - Add a trained logistic live prior once enough resolved labels exist; the guarded historical empirical prior is already wired in.
 - Extend `murphy analysis-report` with plots and grouped train/test split exports.
-- Add training/evaluation splits that avoid leakage across correlated hourly rows from the same option contract.
+- Use the grouped split exports for ScalarLM training and offline model comparisons.

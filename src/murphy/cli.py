@@ -31,7 +31,11 @@ from murphy.offline_export import export_cloud_sql_to_duckdb
 from murphy.operational_status import build_operational_status_report
 from murphy.predict import DeterministicPredictor, OpenAiPredictor, predict_pending
 from murphy.repository import CloudSqlRepository, DuckDbRepository
-from murphy.training.datasets import scalar_sft_dataset_from_report, write_jsonl
+from murphy.training.datasets import (
+    scalar_sft_dataset_from_report,
+    scalar_sft_split_datasets_from_report,
+    write_jsonl,
+)
 from murphy.web_context import YahooFinanceNewsProvider, news_items_payload
 
 
@@ -196,6 +200,20 @@ def main() -> None:
     scalar_export_parser.add_argument("--output", default="data/scalar_sft_resolved.jsonl")
     scalar_export_parser.add_argument("--gcs-uri", default=None)
     scalar_export_parser.add_argument("--allow-leakage-check-failures", action="store_true")
+
+    scalar_split_parser = subparsers.add_parser(
+        "export-scalar-sft-splits",
+        help="Export resolved ScalarLM SFT JSONL files with leakage-safe grouped splits.",
+    )
+    scalar_split_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
+    scalar_split_parser.add_argument("--db", default="data/murphy.duckdb")
+    scalar_split_parser.add_argument("--ticker", default=None)
+    scalar_split_parser.add_argument("--limit", type=int, default=10000)
+    scalar_split_parser.add_argument("--output-dir", default="data/scalar_sft_splits")
+    scalar_split_parser.add_argument("--test-fraction", type=float, default=0.2)
+    scalar_split_parser.add_argument("--validation-fraction", type=float, default=0.0)
+    scalar_split_parser.add_argument("--gcs-uri", default=None)
+    scalar_split_parser.add_argument("--allow-leakage-check-failures", action="store_true")
 
     status_parser = subparsers.add_parser(
         "daily-status",
@@ -470,6 +488,45 @@ def main() -> None:
         if args.gcs_uri:
             uploaded_uri = upload_file_to_gcs(args.output, args.gcs_uri)
             print(f"uploaded ScalarLM SFT rows to {uploaded_uri}")
+        return
+
+    if args.command == "export-scalar-sft-splits":
+        repository = _repository_for_backend(args.backend, args.db)
+        try:
+            report = repository.evaluation_report(
+                ticker=args.ticker,
+                limit=args.limit,
+                include_unresolved=False,
+            )
+        finally:
+            repository.close()
+        split_rows, manifest = scalar_sft_split_datasets_from_report(
+            report,
+            test_fraction=args.test_fraction,
+            validation_fraction=args.validation_fraction,
+            require_leakage_checks=not args.allow_leakage_check_failures,
+        )
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        written_files = []
+        counts = {}
+        for split, rows in sorted(split_rows.items()):
+            output_path = output_dir / f"{split}.jsonl"
+            counts[split] = write_jsonl(rows, output_path)
+            written_files.append(output_path)
+        manifest_path = output_dir / "manifest.json"
+        manifest_path.write_text(
+            json.dumps({**manifest, "files": counts}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        written_files.append(manifest_path)
+        print(f"exported grouped ScalarLM split rows to {output_dir}")
+        print(json.dumps({**manifest, "files": counts}, indent=2, sort_keys=True))
+        if args.gcs_uri:
+            uploaded = [upload_file_to_gcs(path, args.gcs_uri) for path in written_files]
+            print("uploaded grouped ScalarLM split files:")
+            for uri in uploaded:
+                print(uri)
         return
 
     if args.command == "daily-status":

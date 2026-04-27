@@ -55,10 +55,14 @@ murphy export-scalar-sft-dataset \
   English question can repeat for the same ticker/strike/expiry, but the option
   price, spot, IV, volume/open interest, cached web context, prompt, and LLM
   response belong to the forecast hour when they were captured.
+- Export leakage-safe grouped ScalarLM train/test JSONL files with
+  `murphy export-scalar-sft-splits`. The grouping boundary is
+  `symbol|resolution_due|strike`, so repeated hourly rows for the same option
+  contract cannot cross train/test splits.
 - Add notification channels to the GCP log-based alert policies.
 - Add a weekly scheduled ScalarLM dataset export after enough resolutions exist.
 - Use the expanded liquid ticker set cautiously and monitor Yahoo/OpenAI cost.
 - Add a trained logistic live prior once enough resolved labels exist; the
   guarded historical empirical prior is already wired into prompts and traces.
-- Extend `murphy analysis-report` with plots and grouped train/test split
-  exports for ScalarLM experiments.
+- Extend `murphy analysis-report` with plots and grouped split summaries for
+  ScalarLM experiments.
