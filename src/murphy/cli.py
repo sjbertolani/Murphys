@@ -85,6 +85,19 @@ def main() -> None:
         help="Resolve due live questions from stored underlying bars.",
     )
     resolve_parser.add_argument("--db", default="data/murphy.duckdb")
+    resolve_parser.add_argument("--allow-prior-close", action="store_true")
+
+    resolve_report_parser = subparsers.add_parser(
+        "resolve-and-report",
+        help="Collect underlying bars, resolve due questions, and print an evaluation report.",
+    )
+    resolve_report_parser.add_argument("--provider", default="yahoo", choices=["yahoo", "yfinance"])
+    resolve_report_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
+    resolve_report_parser.add_argument("--db", default="data/murphy.duckdb")
+    resolve_report_parser.add_argument("--tickers", nargs="+", required=True)
+    resolve_report_parser.add_argument("--lookback-days", type=int, default=10)
+    resolve_report_parser.add_argument("--report-limit", type=int, default=50)
+    resolve_report_parser.add_argument("--allow-prior-close", action="store_true")
 
     collect_parser = subparsers.add_parser(
         "collect-snapshots",
@@ -191,8 +204,34 @@ def main() -> None:
         return
 
     if args.command == "resolve-live-questions":
-        count = resolve_due_live_questions(db_path=args.db)
+        count = resolve_due_live_questions(
+            db_path=args.db,
+            require_expiration_date=not args.allow_prior_close,
+        )
         print(f"resolved {count} live questions")
+        return
+
+    if args.command == "resolve-and-report":
+        repository = _repository_for_backend(args.backend, args.db)
+        try:
+            bar_count = _collect_resolution_bars_into_repository(
+                repository=repository,
+                provider_name=args.provider,
+                tickers=args.tickers,
+                lookback_days=args.lookback_days,
+            )
+            resolved = repository.resolve_due_live_questions(
+                require_expiration_date=not args.allow_prior_close,
+            )
+            report = repository.evaluation_report(
+                ticker=args.tickers[0] if len(args.tickers) == 1 else None,
+                limit=args.report_limit,
+                include_unresolved=True,
+            )
+        finally:
+            repository.close()
+        print(f"resolve-and-report provider={args.provider} bars={bar_count} resolved={resolved}")
+        print(json.dumps(report, default=str, indent=2, sort_keys=True))
         return
 
     if args.command == "collect-snapshots":
@@ -416,6 +455,37 @@ def _collect_into_repository(
     snapshot_count = repository.insert_option_snapshots(snapshots)
     repository.record_collection_result(result)
     return bar_count, snapshot_count, result
+
+
+def _collect_resolution_bars_into_repository(
+    repository,
+    provider_name: str,
+    tickers: list[str],
+    lookback_days: int,
+) -> int:
+    provider = provider_from_name(provider_name)
+    normalized_tickers = sorted({ticker.strip().upper() for ticker in tickers if ticker.strip()})
+    bars = provider.fetch_underlying_bars(
+        normalized_tickers,
+        lookback_days=lookback_days,
+    )
+    captured_at = max((bar.timestamp for bar in bars), default=None)
+    repository.record_external_call(
+        provider=provider.name,
+        call_type="resolution_underlying_bars",
+        request_payload={
+            "tickers": normalized_tickers,
+            "lookback_days": lookback_days,
+        },
+        response_payload={
+            "underlying_bars": [bar.model_dump(mode="json") for bar in bars],
+            "counts": {"underlying_bars": len(bars)},
+        },
+        captured_at=captured_at,
+        information_cutoff=captured_at,
+        source_timestamp=captured_at,
+    )
+    return repository.insert_underlying_bars(bars)
 
 
 if __name__ == "__main__":

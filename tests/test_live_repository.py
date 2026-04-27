@@ -101,3 +101,142 @@ def test_duckdb_repository_live_question_and_prediction(tmp_path) -> None:
         assert len(cache[2]) == 64
     finally:
         con.close()
+
+
+def test_duckdb_repository_limits_one_question_per_strike_expiry_day(tmp_path) -> None:
+    db_path = tmp_path / "murphy.duckdb"
+    quote_time = datetime(2026, 4, 27, 16, 0, tzinfo=timezone.utc)
+    expiration = quote_time + timedelta(days=7)
+    repo = DuckDbRepository(db_path)
+    try:
+        repo.insert_option_snapshots(
+            [
+                OptionSnapshot(
+                    symbol="AAPL",
+                    option_symbol="AAPL260504C00200000",
+                    quote_timestamp=quote_time,
+                    expiration=expiration,
+                    strike=200,
+                    right=OptionRight.CALL,
+                    bid=4.9,
+                    ask=5.1,
+                    mid=5.0,
+                    implied_volatility=0.25,
+                    volume=10,
+                    open_interest=100,
+                    spot=201,
+                )
+            ]
+        )
+        assert len(repo.generate_live_questions(min_dte=5, max_dte=10, max_questions=5)) == 1
+
+        repo.insert_option_snapshots(
+            [
+                OptionSnapshot(
+                    symbol="AAPL",
+                    option_symbol="AAPL260504C00200000",
+                    quote_timestamp=quote_time + timedelta(hours=1),
+                    expiration=expiration,
+                    strike=200,
+                    right=OptionRight.CALL,
+                    bid=5.2,
+                    ask=5.4,
+                    mid=5.3,
+                    implied_volatility=0.26,
+                    volume=12,
+                    open_interest=100,
+                    spot=202,
+                )
+            ]
+        )
+        assert len(repo.generate_live_questions(min_dte=5, max_dte=10, max_questions=5)) == 0
+
+        repo.insert_option_snapshots(
+            [
+                OptionSnapshot(
+                    symbol="AAPL",
+                    option_symbol="AAPL260504C00200000",
+                    quote_timestamp=quote_time + timedelta(days=1),
+                    expiration=expiration,
+                    strike=200,
+                    right=OptionRight.CALL,
+                    bid=6.0,
+                    ask=6.2,
+                    mid=6.1,
+                    implied_volatility=0.27,
+                    volume=15,
+                    open_interest=100,
+                    spot=203,
+                )
+            ]
+        )
+        next_day_questions = repo.generate_live_questions(min_dte=5, max_dte=10, max_questions=5)
+        assert len(next_day_questions) == 1
+    finally:
+        repo.close()
+
+
+def test_duckdb_resolver_requires_expiration_date_bar(tmp_path) -> None:
+    db_path = tmp_path / "murphy.duckdb"
+    quote_time = datetime(2026, 4, 18, 16, 0, tzinfo=timezone.utc)
+    expiration = datetime(2026, 4, 25, 21, 0, tzinfo=timezone.utc)
+    repo = DuckDbRepository(db_path)
+    try:
+        repo.insert_option_snapshots(
+            [
+                OptionSnapshot(
+                    symbol="AAPL",
+                    option_symbol="AAPL260425C00200000",
+                    quote_timestamp=quote_time,
+                    expiration=expiration,
+                    strike=200,
+                    right=OptionRight.CALL,
+                    bid=4.9,
+                    ask=5.1,
+                    mid=5.0,
+                    implied_volatility=0.25,
+                    volume=10,
+                    open_interest=100,
+                    spot=201,
+                )
+            ]
+        )
+        questions = repo.generate_live_questions(min_dte=5, max_dte=10, max_questions=5)
+        assert len(questions) == 1
+
+        repo.insert_underlying_bars(
+            [
+                UnderlyingBar(
+                    symbol="AAPL",
+                    timestamp=expiration - timedelta(days=1),
+                    open=204,
+                    high=206,
+                    low=203,
+                    close=205,
+                    volume=1000,
+                )
+            ]
+        )
+        assert repo.resolve_due_live_questions() == 0
+
+        repo.insert_underlying_bars(
+            [
+                UnderlyingBar(
+                    symbol="AAPL",
+                    timestamp=expiration - timedelta(minutes=1),
+                    open=204,
+                    high=206,
+                    low=203,
+                    close=205,
+                    volume=1000,
+                )
+            ]
+        )
+        assert repo.resolve_due_live_questions() == 1
+
+        report = repo.evaluation_report(ticker="AAPL", include_unresolved=False)
+        assert report["summary"]["n_resolved"] == 1
+        assert report["predictions"][0]["label"] == 1
+        assert report["predictions"][0]["underlying_close"] == 205
+    finally:
+        repo.close()

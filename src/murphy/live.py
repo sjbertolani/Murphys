@@ -80,6 +80,15 @@ def generate_live_questions_from_snapshots(
                 AND date_diff('second', s.quote_timestamp, s.expiration) / 86400.0 BETWEEN ? AND ?
                 AND coalesce(s.open_interest, 0) >= ?
                 AND coalesce(s.volume, 0) >= ?
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM option_examples e
+                  JOIN live_questions q ON q.example_id = e.example_id
+                  WHERE e.symbol = s.symbol
+                    AND e.expiration = s.expiration
+                    AND e.strike = s.strike
+                    AND CAST(e.forecast_timestamp AS DATE) = CAST(s.quote_timestamp AS DATE)
+                )
             )
             SELECT
               symbol, option_symbol, quote_timestamp, expiration, strike, spot, dte, moneyness
@@ -367,7 +376,10 @@ def record_llm_response(
         con.close()
 
 
-def resolve_due_live_questions(db_path: str = "data/murphy.duckdb") -> int:
+def resolve_due_live_questions(
+    db_path: str = "data/murphy.duckdb",
+    require_expiration_date: bool = True,
+) -> int:
     """Resolve due live questions using stored underlying bars.
 
     This only uses data already stored in `underlying_bars`. A separate collector
@@ -393,16 +405,25 @@ def resolve_due_live_questions(db_path: str = "data/murphy.duckdb") -> int:
         ).fetchall()
         resolved = 0
         for question_id, symbol, strike, expiration in rows:
+            date_filter = (
+                "AND CAST(timestamp AS DATE) = CAST(? AS DATE)"
+                if require_expiration_date
+                else ""
+            )
+            params = [symbol, expiration]
+            if require_expiration_date:
+                params.append(expiration)
             bar = con.execute(
-                """
+                f"""
                 SELECT close, timestamp
                 FROM underlying_bars
                 WHERE symbol = ?
                   AND timestamp <= ?
+                  {date_filter}
                 ORDER BY timestamp DESC
                 LIMIT 1
                 """,
-                [symbol, expiration],
+                params,
             ).fetchone()
             if bar is None:
                 continue

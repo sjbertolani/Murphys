@@ -204,8 +204,8 @@ class DuckDbRepository:
         )
         return response_id
 
-    def resolve_due_live_questions(self) -> int:
-        return _resolve_due_live_questions_duckdb(self.db.conn)
+    def resolve_due_live_questions(self, require_expiration_date: bool = True) -> int:
+        return _resolve_due_live_questions_duckdb(self.db.conn, require_expiration_date)
 
     def live_ticker_summary(self, ticker: str, limit: int = 5) -> dict:
         return _live_ticker_summary_duckdb(self.db.conn, ticker, limit)
@@ -397,6 +397,15 @@ class CloudSqlRepository:
                     BETWEEN :min_dte AND :max_dte
                 AND coalesce(s.open_interest, 0) >= :min_open_interest
                 AND coalesce(s.volume, 0) >= :min_volume
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM option_examples e
+                  JOIN live_questions q ON q.example_id = e.example_id
+                  WHERE e.symbol = s.symbol
+                    AND e.expiration = s.expiration
+                    AND e.strike = s.strike
+                    AND CAST(e.forecast_timestamp AS DATE) = CAST(s.quote_timestamp AS DATE)
+                )
             )
             SELECT
               symbol, option_symbol, quote_timestamp, expiration, strike, spot, dte, moneyness
@@ -575,7 +584,7 @@ class CloudSqlRepository:
             )
         return response_id
 
-    def resolve_due_live_questions(self) -> int:
+    def resolve_due_live_questions(self, require_expiration_date: bool = True) -> int:
         import sqlalchemy
 
         with self.engine.begin() as conn:
@@ -593,13 +602,19 @@ class CloudSqlRepository:
             ).fetchall()
             resolved = 0
             for row in rows:
+                date_filter = (
+                    "AND CAST(timestamp AS DATE) = CAST(:expiration AS DATE)"
+                    if require_expiration_date
+                    else ""
+                )
                 bar = conn.execute(
                     sqlalchemy.text(
-                        """
+                        f"""
                         SELECT close, timestamp
                         FROM underlying_bars
                         WHERE symbol = :symbol
                           AND timestamp <= :expiration
+                          {date_filter}
                         ORDER BY timestamp DESC
                         LIMIT 1
                         """
@@ -992,6 +1007,15 @@ def _generate_live_questions_duckdb(
             AND date_diff('second', s.quote_timestamp, s.expiration) / 86400.0 BETWEEN ? AND ?
             AND coalesce(s.open_interest, 0) >= ?
             AND coalesce(s.volume, 0) >= ?
+            AND NOT EXISTS (
+              SELECT 1
+              FROM option_examples e
+              JOIN live_questions q ON q.example_id = e.example_id
+              WHERE e.symbol = s.symbol
+                AND e.expiration = s.expiration
+                AND e.strike = s.strike
+                AND CAST(e.forecast_timestamp AS DATE) = CAST(s.quote_timestamp AS DATE)
+            )
         )
         SELECT
           symbol, option_symbol, quote_timestamp, expiration, strike, spot, dte, moneyness
@@ -1539,17 +1563,18 @@ def _build_evaluation_report(
         item = _evaluation_item(row, llm_cache, matching_market_cache)
         items.append(item)
 
-    resolved = [item for item in items if item["label"] is not None and item["probability"] is not None]
+    resolved = [item for item in items if item["label"] is not None]
+    scorable = [item for item in resolved if item["probability"] is not None]
     brier = None
     accuracy = None
-    if resolved:
+    if scorable:
         brier = sum(
-            (float(item["probability"]) - float(item["label"])) ** 2 for item in resolved
-        ) / len(resolved)
+            (float(item["probability"]) - float(item["label"])) ** 2 for item in scorable
+        ) / len(scorable)
         accuracy = sum(
             int((float(item["probability"]) >= 0.5) == bool(item["label"]))
-            for item in resolved
-        ) / len(resolved)
+            for item in scorable
+        ) / len(scorable)
     leakage_failures = [
         item
         for item in items
@@ -1562,6 +1587,7 @@ def _build_evaluation_report(
             "n_predictions": len(items),
             "n_resolved": len(resolved),
             "n_unresolved": len(items) - len(resolved),
+            "n_scorable": len(scorable),
             "n_leakage_check_failures": len(leakage_failures),
             "brier_score": brier,
             "accuracy_at_0_5": accuracy,
@@ -1696,7 +1722,7 @@ def _rows_as_dicts(cursor) -> list[dict]:
     return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
 
-def _resolve_due_live_questions_duckdb(conn) -> int:
+def _resolve_due_live_questions_duckdb(conn, require_expiration_date: bool = True) -> int:
     rows = conn.execute(
         """
         SELECT q.question_id, e.symbol, e.strike, e.expiration
@@ -1709,16 +1735,25 @@ def _resolve_due_live_questions_duckdb(conn) -> int:
     ).fetchall()
     resolved = 0
     for question_id, symbol, strike, expiration in rows:
+        date_filter = (
+            "AND CAST(timestamp AS DATE) = CAST(? AS DATE)"
+            if require_expiration_date
+            else ""
+        )
+        params = [symbol, expiration]
+        if require_expiration_date:
+            params.append(expiration)
         bar = conn.execute(
-            """
+            f"""
             SELECT close, timestamp
             FROM underlying_bars
             WHERE symbol = ?
               AND timestamp <= ?
+              {date_filter}
             ORDER BY timestamp DESC
             LIMIT 1
             """,
-            [symbol, expiration],
+            params,
         ).fetchone()
         if bar is None:
             continue
