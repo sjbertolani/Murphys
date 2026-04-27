@@ -16,6 +16,12 @@ Will the price of $TICKER be greater than $ATM_CALL_OPTION_STRIKE_PRICE on $DATE
 
 Important dataset rule: the same English question may repeat, but each hourly market snapshot is a distinct forecast instance. The identity is effectively ticker/option/strike/expiry plus forecast-hour information cutoff. This preserves changing option prices, spot, IV, volume/open interest, cached context, prompt, and LLM response over time.
 
+Current live ticker set:
+
+```text
+AAPL MSFT NVDA AMD SPY QQQ
+```
+
 ## Live GCP Deployment
 
 Project:
@@ -123,6 +129,16 @@ Print an evaluation report:
 murphy evaluation-report --backend cloud-sql --ticker AAPL
 ```
 
+Write an offline analysis report:
+
+```bash
+murphy export-cloud-sql-to-duckdb --duckdb data/murphy_offline.duckdb
+murphy analysis-report \
+  --backend duckdb \
+  --db data/murphy_offline.duckdb \
+  --output data/offline_analysis_report.md
+```
+
 Mirror Cloud SQL to BigQuery:
 
 ```bash
@@ -146,11 +162,12 @@ murphy export-scalar-sft-dataset \
 
 ## Verified So Far
 
-- Full test suite passes: `36 passed`.
+- Full test suite passes: `38 passed`.
 - Cloud Run `murphy-daily-status` executed successfully.
 - Cloud Run `murphy-scalar-sft-export` executed successfully and uploaded an expected empty JSONL while there are no resolved labels yet.
 - BigQuery mirror has been verified with live row counts.
 - The current deployed generator creates at most one forecast per ticker/strike/expiry per forecast hour.
+- Expanded scheduled run for `AAPL MSFT NVDA AMD SPY QQQ` completed successfully with 946 option snapshots, 30 cached news items, 30 questions, and 30 predictions.
 - Cloud Monitoring alert policies exist for failed Cloud Run jobs and non-empty `daily-status` warnings.
 
 ## Docs
@@ -165,5 +182,5 @@ Near-term priorities:
 
 - Add notification channels to the GCP alert policies.
 - Add a trained logistic live prior once enough resolved labels exist; the guarded historical empirical prior is already wired in.
-- Expand ticker coverage slowly after the first AAPL prediction-resolution cycle succeeds.
+- Extend `murphy analysis-report` with plots and grouped train/test split exports.
 - Add training/evaluation splits that avoid leakage across correlated hourly rows from the same option contract.

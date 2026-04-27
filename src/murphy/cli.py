@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from murphy.analysis_report import build_analysis_report, render_markdown_report
 from murphy.baselines import run_baselines
 from murphy.bigquery import (
     bigquery_table_freshness,
@@ -167,6 +168,18 @@ def main() -> None:
     eval_report_parser.add_argument("--ticker", default=None)
     eval_report_parser.add_argument("--limit", type=int, default=50)
     eval_report_parser.add_argument("--resolved-only", action="store_true")
+
+    analysis_parser = subparsers.add_parser(
+        "analysis-report",
+        help="Write an offline analysis report for cached live predictions.",
+    )
+    analysis_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
+    analysis_parser.add_argument("--db", default="data/murphy.duckdb")
+    analysis_parser.add_argument("--ticker", default=None)
+    analysis_parser.add_argument("--limit", type=int, default=10000)
+    analysis_parser.add_argument("--resolved-only", action="store_true")
+    analysis_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    analysis_parser.add_argument("--output", default="data/offline_analysis_report.md")
 
     scalar_export_parser = subparsers.add_parser(
         "export-scalar-sft-dataset",
@@ -405,6 +418,29 @@ def main() -> None:
         finally:
             repository.close()
         print(json.dumps(report, default=str, indent=2, sort_keys=True))
+        return
+
+    if args.command == "analysis-report":
+        repository = _repository_for_backend(args.backend, args.db)
+        try:
+            report = build_analysis_report(
+                repository,
+                ticker=args.ticker,
+                limit=args.limit,
+                include_unresolved=not args.resolved_only,
+            )
+        finally:
+            repository.close()
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if args.format == "json":
+            output_path.write_text(
+                json.dumps(report, default=str, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            output_path.write_text(render_markdown_report(report), encoding="utf-8")
+        print(f"wrote analysis report to {output_path}")
         return
 
     if args.command == "export-scalar-sft-dataset":

@@ -3,6 +3,12 @@
 This phase makes the live forecasting system easier to operate while it waits
 for the first real option expiries to resolve.
 
+Current live ticker set:
+
+```text
+AAPL MSFT NVDA AMD SPY QQQ
+```
+
 ## 1. Operational Status And Warnings
 
 Implemented first because it gives fast feedback from scheduled Cloud Run logs.
@@ -41,7 +47,8 @@ murphy export-scalar-sft-dataset \
   response belong to the forecast hour when they were captured.
 - Add notification channels to the GCP log-based alert policies.
 - Add a weekly scheduled ScalarLM dataset export after enough resolutions exist.
-- Expand ticker coverage slowly once AAPL has a complete prediction-resolution
-  cycle.
+- Use the expanded liquid ticker set cautiously and monitor Yahoo/OpenAI cost.
 - Add a trained logistic live prior once enough resolved labels exist; the
   guarded historical empirical prior is already wired into prompts and traces.
+- Extend `murphy analysis-report` with plots and grouped train/test split
+  exports for ScalarLM experiments.
