@@ -12,6 +12,11 @@ from murphy.db import MurphyDb
 from murphy.live import LiveQuestion, call_option_question_text, live_llm_prompt
 from murphy.market_data.collect import CollectionResult
 from murphy.options_data import make_example_id
+from murphy.priors import (
+    bayesian_binary_update,
+    delta_as_probability,
+    risk_neutral_call_itm_probability,
+)
 from murphy.schemas import OptionSnapshot, UnderlyingBar
 
 
@@ -152,6 +157,8 @@ class DuckDbRepository:
         ).fetchone()
         if info_cutoff is None:
             raise ValueError(f"unknown question_id {question_id}")
+        market_prior = _market_prior_for_example_duckdb(self.db.conn, info_cutoff[1])
+        posterior_probability = bayesian_binary_update(market_prior, probability, signal_weight=0.75)
         self.db.conn.execute(
             """
             INSERT INTO llm_responses
@@ -197,6 +204,8 @@ class DuckDbRepository:
             probability=probability,
             reasoning=reasoning,
             raw_response=raw_response,
+            market_prior=market_prior,
+            posterior_probability=posterior_probability,
         )
         self.db.conn.execute(
             "UPDATE live_questions SET status = 'predicted' WHERE question_id = ?",
@@ -528,6 +537,12 @@ class CloudSqlRepository:
             ).fetchone()
             if info_cutoff is None:
                 raise ValueError(f"unknown question_id {question_id}")
+            market_prior = _market_prior_for_example_postgres(conn, sqlalchemy, info_cutoff.example_id)
+            posterior_probability = bayesian_binary_update(
+                market_prior,
+                probability,
+                signal_weight=0.75,
+            )
             conn.execute(
                 sqlalchemy.text(
                     """
@@ -579,6 +594,8 @@ class CloudSqlRepository:
                 probability=probability,
                 reasoning=reasoning,
                 raw_response=raw_response,
+                market_prior=market_prior,
+                posterior_probability=posterior_probability,
             )
             conn.execute(
                 sqlalchemy.text(
@@ -852,17 +869,23 @@ def _record_external_call_postgres(
     return str(call["call_id"])
 
 
-def _prediction_beliefs(probability: float, reasoning: str | None, raw_response: str | None) -> dict:
+def _prediction_beliefs(
+    probability: float,
+    reasoning: str | None,
+    raw_response: str | None,
+    market_prior: float,
+    posterior_probability: float,
+) -> dict:
     return {
         "initial": {
-            "probability": 0.5,
+            "probability": float(market_prior),
             "confidence": 0.0,
             "evidence_for": [],
             "evidence_against": [],
             "open_questions": ["Awaiting LLM probability estimate from cutoff-bounded prompt."],
-            "update_reasoning": "Uninformative prior before the LLM response is observed.",
+            "update_reasoning": "Market-implied prior before the LLM response is observed.",
         },
-        "updated": {
+        "llm": {
             "probability": float(probability),
             "confidence": abs(float(probability) - 0.5) * 2.0,
             "evidence_for": [],
@@ -870,6 +893,20 @@ def _prediction_beliefs(probability: float, reasoning: str | None, raw_response:
             "open_questions": [],
             "update_reasoning": reasoning or "Model returned a probability without separate reasoning.",
             "raw_response": raw_response,
+        },
+        "posterior": {
+            "probability": float(posterior_probability),
+            "confidence": abs(float(posterior_probability) - 0.5) * 2.0,
+            "evidence_for": [],
+            "evidence_against": [],
+            "open_questions": [],
+            "update_reasoning": (
+                "Log-odds Bayesian update combining the market-implied prior with "
+                "the LLM probability signal."
+            ),
+            "market_prior": float(market_prior),
+            "llm_probability": float(probability),
+            "llm_signal_weight": 0.75,
         },
     }
 
@@ -883,16 +920,24 @@ def _record_prediction_trace_duckdb(
     probability: float,
     reasoning: str | None,
     raw_response: str | None,
+    market_prior: float,
+    posterior_probability: float,
 ) -> None:
     trial_id = f"llm:{response_id}"
-    beliefs = _prediction_beliefs(probability, reasoning, raw_response)
+    beliefs = _prediction_beliefs(
+        probability,
+        reasoning,
+        raw_response,
+        market_prior,
+        posterior_probability,
+    )
     conn.execute(
         """
         INSERT INTO agent_trials
           (trial_id, example_id, seed, model, started_at, raw_probability, status)
         VALUES (?, ?, NULL, ?, ?, ?, 'completed')
         """,
-        [trial_id, example_id, model, created_at, probability],
+        [trial_id, example_id, model, created_at, posterior_probability],
     )
     conn.executemany(
         """
@@ -908,7 +953,7 @@ def _record_prediction_trace_duckdb(
                 json.dumps({"type": "initialize"}),
                 None,
                 json.dumps(beliefs["initial"], sort_keys=True),
-                0.5,
+                market_prior,
             ],
             [
                 trial_id,
@@ -916,8 +961,17 @@ def _record_prediction_trace_duckdb(
                 "record_llm_probability",
                 json.dumps({"type": "llm_response", "response_id": response_id}),
                 response_id,
-                json.dumps(beliefs["updated"], sort_keys=True),
+                json.dumps(beliefs["llm"], sort_keys=True),
                 probability,
+            ],
+            [
+                trial_id,
+                2,
+                "bayesian_update",
+                json.dumps({"type": "bayesian_update", "response_id": response_id}),
+                response_id,
+                json.dumps(beliefs["posterior"], sort_keys=True),
+                posterior_probability,
             ],
         ],
     )
@@ -932,11 +986,19 @@ def _record_prediction_trace_postgres(
     probability: float,
     reasoning: str | None,
     raw_response: str | None,
+    market_prior: float,
+    posterior_probability: float,
 ) -> None:
     import sqlalchemy
 
     trial_id = f"llm:{response_id}"
-    beliefs = _prediction_beliefs(probability, reasoning, raw_response)
+    beliefs = _prediction_beliefs(
+        probability,
+        reasoning,
+        raw_response,
+        market_prior,
+        posterior_probability,
+    )
     conn.execute(
         sqlalchemy.text(
             """
@@ -951,7 +1013,7 @@ def _record_prediction_trace_postgres(
             "example_id": example_id,
             "model": model,
             "started_at": created_at,
-            "raw_probability": probability,
+            "raw_probability": posterior_probability,
         },
     )
     conn.execute(
@@ -972,7 +1034,7 @@ def _record_prediction_trace_postgres(
                 "action_json": json.dumps({"type": "initialize"}),
                 "observation_ref": None,
                 "belief_json": json.dumps(beliefs["initial"], sort_keys=True),
-                "probability": 0.5,
+                "probability": market_prior,
             },
             {
                 "trial_id": trial_id,
@@ -980,11 +1042,82 @@ def _record_prediction_trace_postgres(
                 "action_type": "record_llm_probability",
                 "action_json": json.dumps({"type": "llm_response", "response_id": response_id}),
                 "observation_ref": response_id,
-                "belief_json": json.dumps(beliefs["updated"], sort_keys=True),
+                "belief_json": json.dumps(beliefs["llm"], sort_keys=True),
                 "probability": probability,
+            },
+            {
+                "trial_id": trial_id,
+                "step_index": 2,
+                "action_type": "bayesian_update",
+                "action_json": json.dumps({"type": "bayesian_update", "response_id": response_id}),
+                "observation_ref": response_id,
+                "belief_json": json.dumps(beliefs["posterior"], sort_keys=True),
+                "probability": posterior_probability,
             },
         ],
     )
+
+
+def _market_prior_for_example_duckdb(conn, example_id: str) -> float:
+    row = conn.execute(
+        """
+        SELECT e.spot, e.strike, e.dte, s.implied_volatility, s.delta
+        FROM option_examples e
+        LEFT JOIN option_chain_snapshots s
+          ON s.symbol = e.symbol
+         AND s.option_symbol = e.option_symbol
+         AND s.quote_timestamp = e.forecast_timestamp
+        WHERE e.example_id = ?
+        """,
+        [example_id],
+    ).fetchone()
+    if row is None:
+        return 0.5
+    return _market_prior_from_snapshot(*row)
+
+
+def _market_prior_for_example_postgres(conn, sqlalchemy, example_id: str) -> float:
+    row = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT e.spot, e.strike, e.dte, s.implied_volatility, s.delta
+            FROM option_examples e
+            LEFT JOIN option_chain_snapshots s
+              ON s.symbol = e.symbol
+             AND s.option_symbol = e.option_symbol
+             AND s.quote_timestamp = e.forecast_timestamp
+            WHERE e.example_id = :example_id
+            """
+        ),
+        {"example_id": example_id},
+    ).fetchone()
+    if row is None:
+        return 0.5
+    return _market_prior_from_snapshot(row.spot, row.strike, row.dte, row.implied_volatility, row.delta)
+
+
+def _market_prior_from_snapshot(
+    spot,
+    strike,
+    dte,
+    implied_volatility,
+    delta,
+) -> float:
+    try:
+        if implied_volatility is not None and float(implied_volatility) > 0:
+            return risk_neutral_call_itm_probability(
+                spot=float(spot),
+                strike=float(strike),
+                dte=float(dte),
+                volatility=float(implied_volatility),
+            )
+    except (TypeError, ValueError):
+        pass
+    try:
+        delta_probability = delta_as_probability(None if delta is None else float(delta))
+    except (TypeError, ValueError):
+        delta_probability = None
+    return 0.5 if delta_probability is None else float(delta_probability)
 
 
 def _generate_live_questions_duckdb(
@@ -1159,7 +1292,8 @@ def _evidence_block_duckdb(conn, question_id: str) -> str:
     row = conn.execute(
         """
         SELECT
-          e.symbol, e.forecast_timestamp, e.expiration, e.strike, e.spot, e.dte, e.moneyness,
+          e.symbol, e.forecast_timestamp, q.information_cutoff, e.expiration,
+          e.strike, e.spot, e.dte, e.moneyness,
           s.bid, s.ask, s.mid, s.implied_volatility, s.delta, s.volume, s.open_interest
         FROM live_questions q
         JOIN option_examples e ON e.example_id = q.example_id
@@ -1184,7 +1318,8 @@ def _evidence_block_duckdb(conn, question_id: str) -> str:
         """,
         [row[0], row[1]],
     ).fetchall()
-    return _format_evidence_block(row, bars)
+    news_items = _news_context_items_duckdb(conn, symbol=row[0], information_cutoff=row[2])
+    return _format_evidence_block(row, bars, news_items)
 
 
 def _evidence_block_postgres(conn, question_id: str) -> str:
@@ -1194,7 +1329,8 @@ def _evidence_block_postgres(conn, question_id: str) -> str:
         sqlalchemy.text(
             """
             SELECT
-              e.symbol, e.forecast_timestamp, e.expiration, e.strike, e.spot, e.dte, e.moneyness,
+              e.symbol, e.forecast_timestamp, q.information_cutoff, e.expiration,
+              e.strike, e.spot, e.dte, e.moneyness,
               s.bid, s.ask, s.mid, s.implied_volatility, s.delta, s.volume, s.open_interest
             FROM live_questions q
             JOIN option_examples e ON e.example_id = q.example_id
@@ -1222,13 +1358,20 @@ def _evidence_block_postgres(conn, question_id: str) -> str:
         ),
         {"symbol": row.symbol, "forecast_timestamp": row.forecast_timestamp},
     ).fetchall()
-    return _format_evidence_block(tuple(row), [tuple(bar) for bar in bars])
+    news_items = _news_context_items_postgres(
+        conn,
+        sqlalchemy,
+        symbol=row.symbol,
+        information_cutoff=row.information_cutoff,
+    )
+    return _format_evidence_block(tuple(row), [tuple(bar) for bar in bars], news_items)
 
 
-def _format_evidence_block(row, bars) -> str:
+def _format_evidence_block(row, bars, news_items: list[dict] | None = None) -> str:
     (
         symbol,
         forecast_timestamp,
+        information_cutoff,
         expiration,
         strike,
         spot,
@@ -1242,6 +1385,7 @@ def _format_evidence_block(row, bars) -> str:
         volume,
         open_interest,
     ) = row
+    market_prior = _market_prior_from_snapshot(spot, strike, dte, iv, delta)
     bar_lines = [
         "recent_underlying_bars_most_recent_first:",
         *[
@@ -1249,10 +1393,22 @@ def _format_evidence_block(row, bars) -> str:
             for timestamp, open_, high, low, close, volume in bars
         ],
     ]
+    news_lines = ["cached_web_news_context:"]
+    for item in news_items or []:
+        news_lines.append(
+            "- "
+            f"{item.get('published_at') or 'unknown_time'} "
+            f"{item.get('title')} "
+            f"source={item.get('source')} "
+            f"link={item.get('link')}"
+        )
+    if len(news_lines) == 1:
+        news_lines.append("- none_cached_for_this_forecast")
     return "\n".join(
         [
             f"symbol: {symbol}",
             f"forecast_timestamp: {forecast_timestamp}",
+            f"information_cutoff: {information_cutoff}",
             f"expiration: {expiration}",
             f"strike: {strike}",
             f"spot_at_forecast: {spot}",
@@ -1263,11 +1419,57 @@ def _format_evidence_block(row, bars) -> str:
             f"mid: {mid}",
             f"implied_volatility: {iv}",
             f"delta: {delta}",
+            f"market_implied_prior_probability: {market_prior:.6f}",
             f"volume: {volume}",
             f"open_interest: {open_interest}",
             *bar_lines,
+            *news_lines,
         ]
     )
+
+
+def _news_context_items_duckdb(conn, symbol: str, information_cutoff) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT response_json
+        FROM external_call_cache
+        WHERE call_type = 'web_news_context'
+          AND source_timestamp <= ?
+        ORDER BY source_timestamp DESC, captured_at DESC
+        LIMIT 10
+        """,
+        [information_cutoff],
+    ).fetchall()
+    return _news_context_items_from_cache_payloads([row[0] for row in rows], symbol)
+
+
+def _news_context_items_postgres(conn, sqlalchemy, symbol: str, information_cutoff) -> list[dict]:
+    rows = conn.execute(
+        sqlalchemy.text(
+            """
+            SELECT response_json
+            FROM external_call_cache
+            WHERE call_type = 'web_news_context'
+              AND source_timestamp <= :information_cutoff
+            ORDER BY source_timestamp DESC, captured_at DESC
+            LIMIT 10
+            """
+        ),
+        {"information_cutoff": information_cutoff},
+    ).fetchall()
+    return _news_context_items_from_cache_payloads([row.response_json for row in rows], symbol)
+
+
+def _news_context_items_from_cache_payloads(payloads: list, symbol: str) -> list[dict]:
+    items: list[dict] = []
+    for payload in payloads:
+        parsed = _json_value(payload)
+        if not isinstance(parsed, dict):
+            continue
+        for item in parsed.get("items", []):
+            if isinstance(item, dict) and str(item.get("ticker", "")).upper() == symbol.upper():
+                items.append(item)
+    return items[:5]
 
 
 def _live_ticker_summary_duckdb(conn, ticker: str, limit: int) -> dict:
@@ -1444,12 +1646,22 @@ def _evaluation_report_duckdb(
           r.probability,
           r.created_at AS prediction_created_at,
           r.information_cutoff AS response_information_cutoff,
+          bs.posterior_probability,
           lr.resolved_at,
           lr.underlying_close,
           lr.label
         FROM live_questions q
         JOIN option_examples e ON e.example_id = q.example_id
         LEFT JOIN llm_responses r ON r.question_id = q.question_id
+        LEFT JOIN (
+          SELECT observation_ref AS response_id, probability AS posterior_probability
+          FROM agent_steps
+          WHERE action_type = 'bayesian_update'
+          QUALIFY row_number() OVER (
+            PARTITION BY observation_ref
+            ORDER BY step_index DESC
+          ) = 1
+        ) bs ON bs.response_id = r.response_id
         LEFT JOIN live_resolutions lr ON lr.question_id = q.question_id
         {where_sql}
         ORDER BY coalesce(r.created_at, q.generated_at) DESC, q.question_id
@@ -1513,12 +1725,28 @@ def _evaluation_report_postgres(
                   r.probability,
                   r.created_at AS prediction_created_at,
                   r.information_cutoff AS response_information_cutoff,
+                  bs.posterior_probability,
                   lr.resolved_at,
                   lr.underlying_close,
                   lr.label
                 FROM live_questions q
                 JOIN option_examples e ON e.example_id = q.example_id
                 LEFT JOIN llm_responses r ON r.question_id = q.question_id
+                LEFT JOIN (
+                  SELECT response_id, posterior_probability
+                  FROM (
+                    SELECT
+                      observation_ref AS response_id,
+                      probability AS posterior_probability,
+                      row_number() OVER (
+                        PARTITION BY observation_ref
+                        ORDER BY step_index DESC
+                      ) AS rn
+                    FROM agent_steps
+                    WHERE action_type = 'bayesian_update'
+                  ) latest_belief
+                  WHERE rn = 1
+                ) bs ON bs.response_id = r.response_id
                 LEFT JOIN live_resolutions lr ON lr.question_id = q.question_id
                 {where_sql}
                 ORDER BY coalesce(r.created_at, q.generated_at) DESC, q.question_id
@@ -1578,6 +1806,11 @@ def _build_evaluation_report(
     scorable = [item for item in resolved if item["probability"] is not None]
     brier = None
     accuracy = None
+    posterior_scorable = [
+        item for item in resolved if item.get("posterior_probability") is not None
+    ]
+    posterior_brier = None
+    posterior_accuracy = None
     if scorable:
         brier = sum(
             (float(item["probability"]) - float(item["label"])) ** 2 for item in scorable
@@ -1586,6 +1819,15 @@ def _build_evaluation_report(
             int((float(item["probability"]) >= 0.5) == bool(item["label"]))
             for item in scorable
         ) / len(scorable)
+    if posterior_scorable:
+        posterior_brier = sum(
+            (float(item["posterior_probability"]) - float(item["label"])) ** 2
+            for item in posterior_scorable
+        ) / len(posterior_scorable)
+        posterior_accuracy = sum(
+            int((float(item["posterior_probability"]) >= 0.5) == bool(item["label"]))
+            for item in posterior_scorable
+        ) / len(posterior_scorable)
     leakage_failures = [
         item
         for item in items
@@ -1599,9 +1841,12 @@ def _build_evaluation_report(
             "n_resolved": len(resolved),
             "n_unresolved": len(items) - len(resolved),
             "n_scorable": len(scorable),
+            "n_posterior_scorable": len(posterior_scorable),
             "n_leakage_check_failures": len(leakage_failures),
             "brier_score": brier,
             "accuracy_at_0_5": accuracy,
+            "posterior_brier_score": posterior_brier,
+            "posterior_accuracy_at_0_5": posterior_accuracy,
         },
         "predictions": items,
     }
@@ -1810,6 +2055,7 @@ def _operational_status_payload(
 
 def _evaluation_item(row: dict, llm_cache: list[dict], market_cache: list[dict]) -> dict:
     probability = row.get("probability")
+    posterior_probability = row.get("posterior_probability")
     label = row.get("label")
     prediction_created_at = row.get("prediction_created_at")
     resolution_due = row.get("resolution_due")
@@ -1863,6 +2109,7 @@ def _evaluation_item(row: dict, llm_cache: list[dict], market_cache: list[dict])
         "moneyness": row.get("moneyness"),
         "model": row.get("model"),
         "probability": probability,
+        "posterior_probability": posterior_probability,
         "label": label,
         "underlying_close": row.get("underlying_close"),
         "brier": (
@@ -1870,10 +2117,20 @@ def _evaluation_item(row: dict, llm_cache: list[dict], market_cache: list[dict])
             if probability is None or label is None
             else (float(probability) - float(label)) ** 2
         ),
+        "posterior_brier": (
+            None
+            if posterior_probability is None or label is None
+            else (float(posterior_probability) - float(label)) ** 2
+        ),
         "correct_at_0_5": (
             None
             if probability is None or label is None
             else (float(probability) >= 0.5) == bool(label)
+        ),
+        "posterior_correct_at_0_5": (
+            None
+            if posterior_probability is None or label is None
+            else (float(posterior_probability) >= 0.5) == bool(label)
         ),
         "external_cache": {
             "llm_prediction_records": len(llm_cache),

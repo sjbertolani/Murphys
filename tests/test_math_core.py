@@ -6,7 +6,12 @@ import unittest
 from murphy.agent.aggregation import arithmetic_mean, logit_mean, variance_adaptive_shrinkage
 from murphy.features import log_returns, realized_volatility, simple_returns
 from murphy.metrics import brier_score, expected_calibration_error, log_loss
-from murphy.priors import empirical_bucket_prior, normal_cdf, risk_neutral_call_itm_probability
+from murphy.priors import (
+    bayesian_binary_update,
+    empirical_bucket_prior,
+    normal_cdf,
+    risk_neutral_call_itm_probability,
+)
 
 
 class MathCoreTests(unittest.TestCase):
@@ -36,6 +41,11 @@ class MathCoreTests(unittest.TestCase):
 
     def test_empirical_prior(self) -> None:
         self.assertAlmostEqual(empirical_bucket_prior(2, 4), 0.5)
+
+    def test_bayesian_binary_update(self) -> None:
+        self.assertAlmostEqual(bayesian_binary_update(0.4, 0.5), 0.4)
+        self.assertGreater(bayesian_binary_update(0.4, 0.7), 0.4)
+        self.assertLess(bayesian_binary_update(0.6, 0.3), 0.6)
 
     def test_aggregation(self) -> None:
         probabilities = [0.4, 0.6]

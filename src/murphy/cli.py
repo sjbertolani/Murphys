@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from murphy.baselines import run_baselines
@@ -30,6 +31,7 @@ from murphy.operational_status import build_operational_status_report
 from murphy.predict import DeterministicPredictor, OpenAiPredictor, predict_pending
 from murphy.repository import CloudSqlRepository, DuckDbRepository
 from murphy.training.datasets import scalar_sft_dataset_from_report, write_jsonl
+from murphy.web_context import YahooFinanceNewsProvider, news_items_payload
 
 
 def main() -> None:
@@ -143,6 +145,8 @@ def main() -> None:
     cycle_parser.add_argument("--model", default="gpt-4.1-mini")
     cycle_parser.add_argument("--prediction-limit", type=int, default=None)
     cycle_parser.add_argument("--dry-run", action="store_true")
+    cycle_parser.add_argument("--no-news-context", action="store_true")
+    cycle_parser.add_argument("--news-limit-per-ticker", type=int, default=5)
     cycle_parser.add_argument("--summary-ticker", default=None)
 
     summary_parser = subparsers.add_parser(
@@ -319,6 +323,33 @@ def main() -> None:
                 max_dte=args.max_dte,
                 lookback_days=args.lookback_days,
             )
+            news_count = 0
+            if not args.no_news_context:
+                try:
+                    news_count = _collect_news_context_into_repository(
+                        repository=repository,
+                        tickers=args.tickers,
+                        information_cutoff=result.collected_at,
+                        limit_per_ticker=args.news_limit_per_ticker,
+                    )
+                except Exception as exc:  # noqa: BLE001 - news is advisory context, not the core job.
+                    normalized_tickers = sorted(
+                        {ticker.strip().upper() for ticker in args.tickers if ticker.strip()}
+                    )
+                    news_error = f"{type(exc).__name__}: {exc}"
+                    repository.record_external_call(
+                        provider="yahoo_finance_news",
+                        call_type="web_news_context_error",
+                        request_payload={
+                            "tickers": normalized_tickers,
+                            "limit_per_ticker": args.news_limit_per_ticker,
+                        },
+                        response_payload={"error": news_error},
+                        captured_at=datetime.now(UTC),
+                        information_cutoff=result.collected_at,
+                        source_timestamp=result.collected_at,
+                    )
+                    print(f"news_context_error={news_error}")
             questions = repository.generate_live_questions(
                 min_dte=args.min_dte,
                 max_dte=args.max_dte,
@@ -347,7 +378,7 @@ def main() -> None:
         print(
             f"live-cycle provider={result.provider} bars={bar_count} "
             f"option_snapshots={snapshot_count} questions={len(questions)} "
-            f"predictions={len(predictions)} resolved={resolved}"
+            f"news_items={news_count} predictions={len(predictions)} resolved={resolved}"
         )
         if summary is not None:
             print("single_ticker_trace_json=")
@@ -416,6 +447,9 @@ def main() -> None:
             max_bigquery_age_hours=args.max_bigquery_age_hours,
         )
         print(json.dumps(report, default=str, indent=2, sort_keys=True))
+        if report["warnings"]:
+            codes = ",".join(warning["code"] for warning in report["warnings"])
+            print(f"MURPHY_DAILY_STATUS_WARNINGS count={len(report['warnings'])} codes={codes}")
         return
 
     if args.command == "init-cloud":
@@ -584,6 +618,30 @@ def _collect_resolution_bars_into_repository(
         source_timestamp=captured_at,
     )
     return repository.insert_underlying_bars(bars)
+
+
+def _collect_news_context_into_repository(
+    repository,
+    tickers: list[str],
+    information_cutoff,
+    limit_per_ticker: int,
+) -> int:
+    provider = YahooFinanceNewsProvider()
+    normalized_tickers = sorted({ticker.strip().upper() for ticker in tickers if ticker.strip()})
+    items = provider.fetch(normalized_tickers, limit_per_ticker=limit_per_ticker)
+    repository.record_external_call(
+        provider=provider.name,
+        call_type="web_news_context",
+        request_payload={
+            "tickers": normalized_tickers,
+            "limit_per_ticker": limit_per_ticker,
+        },
+        response_payload=news_items_payload(items),
+        captured_at=datetime.now(UTC),
+        information_cutoff=information_cutoff,
+        source_timestamp=information_cutoff,
+    )
+    return len(items)
 
 
 if __name__ == "__main__":

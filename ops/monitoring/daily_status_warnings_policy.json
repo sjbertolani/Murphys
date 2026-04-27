@@ -1,0 +1,33 @@
+{
+  "displayName": "Murphy daily-status warnings",
+  "documentation": {
+    "content": "`murphy daily-status` emitted one or more warning codes.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "daily-status warning marker",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/murphy_daily_status_warnings\" AND resource.type=\"cloud_run_job\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "60s",
+            "perSeriesAligner": "ALIGN_DELTA",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "combiner": "OR",
+  "enabled": true,
+  "alertStrategy": {
+    "autoClose": "604800s"
+  }
+}

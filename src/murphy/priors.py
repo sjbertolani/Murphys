@@ -13,6 +13,32 @@ def clamp_probability(probability: float, eps: float = 1e-6) -> float:
     return min(max(probability, eps), 1.0 - eps)
 
 
+def logit(probability: float) -> float:
+    probability = clamp_probability(probability)
+    return math.log(probability / (1.0 - probability))
+
+
+def logistic(value: float) -> float:
+    return 1.0 / (1.0 + math.exp(-value))
+
+
+def bayesian_binary_update(
+    prior_probability: float,
+    signal_probability: float,
+    signal_weight: float = 1.0,
+) -> float:
+    """Update a binary prior using a probability signal as log-odds evidence.
+
+    The signal is interpreted relative to a neutral 0.5 baseline. A signal of
+    0.5 leaves the prior unchanged; a signal above/below 0.5 moves the posterior
+    by `signal_weight` times the signal log-odds.
+    """
+    if signal_weight < 0:
+        raise ValueError("signal_weight must be non-negative")
+    posterior_log_odds = logit(prior_probability) + signal_weight * logit(signal_probability)
+    return clamp_probability(logistic(posterior_log_odds))
+
+
 def black_scholes_d2(
     spot: float,
     strike: float,
@@ -70,4 +96,3 @@ def empirical_bucket_prior(successes: int, total: int, alpha: float = 1.0, beta:
     if successes < 0 or total < 0 or successes > total:
         raise ValueError("invalid successes/total")
     return (successes + alpha) / (total + alpha + beta)
-

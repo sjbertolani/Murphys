@@ -39,10 +39,9 @@ murphy export-scalar-sft-dataset \
   English question can repeat for the same ticker/strike/expiry, but the option
   price, spot, IV, volume/open interest, cached web context, prompt, and LLM
   response belong to the forecast hour when they were captured.
-- Add GCP log-based alerts or Monitoring policies for failed Cloud Run jobs.
+- Add notification channels to the GCP log-based alert policies.
 - Add a weekly scheduled ScalarLM dataset export after enough resolutions exist.
 - Expand ticker coverage slowly once AAPL has a complete prediction-resolution
   cycle.
-- Add stronger probabilistic priors: risk-neutral option-implied probability,
-  historical/logistic baseline, then BLF-style Bayesian updates that treat LLM
-  responses as evidence rather than the whole forecast.
+- Add historical/logistic baselines alongside the option-implied prior and
+  BLF-style posterior.

@@ -53,10 +53,11 @@ Enabled Cloud Scheduler jobs:
 
 - Every forecast gets an `information_cutoff`.
 - Prompts include only stored evidence at or before that cutoff.
-- Market data and LLM calls are recorded in `external_call_cache`.
+- Market data, cached web/news context, and LLM calls are recorded in `external_call_cache`.
 - Cache records include request/response payloads, timestamps, and response hashes.
 - Resolution requires an underlying bar from the actual expiry date by default, preventing stale prior-close labeling.
 - Evaluation reports include leakage checks and cache hash references.
+- Prediction traces include market-implied prior, raw LLM probability, and a BLF-style log-odds posterior update.
 
 ## Data Stores
 
@@ -132,11 +133,12 @@ murphy export-scalar-sft-dataset \
 
 ## Verified So Far
 
-- Full test suite passes: `33 passed`.
+- Full test suite passes: `36 passed`.
 - Cloud Run `murphy-daily-status` executed successfully.
 - Cloud Run `murphy-scalar-sft-export` executed successfully and uploaded an expected empty JSONL while there are no resolved labels yet.
 - BigQuery mirror has been verified with live row counts.
 - The current deployed generator creates at most one forecast per ticker/strike/expiry per forecast hour.
+- Cloud Monitoring alert policies exist for failed Cloud Run jobs and non-empty `daily-status` warnings.
 
 ## Docs
 
@@ -148,8 +150,7 @@ murphy export-scalar-sft-dataset \
 
 Near-term priorities:
 
-- Add GCP log-based alerts or Monitoring policies for failed jobs and non-empty `daily-status` warnings.
-- Add cached web/news context at forecast time, stored through `external_call_cache`.
-- Add stronger probabilistic priors: option-implied probability, historical/logistic baseline, then BLF-style Bayesian updates using LLM responses as evidence.
+- Add notification channels to the GCP alert policies.
+- Add stronger historical/logistic baselines alongside the option-implied prior and BLF-style posterior.
 - Expand ticker coverage slowly after the first AAPL prediction-resolution cycle succeeds.
 - Add training/evaluation splits that avoid leakage across correlated hourly rows from the same option contract.

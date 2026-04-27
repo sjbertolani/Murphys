@@ -1,0 +1,33 @@
+{
+  "displayName": "Murphy Cloud Run job failures",
+  "documentation": {
+    "content": "A Murphy Cloud Run job emitted a non-zero container exit log.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "Non-zero Cloud Run job exits",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/murphy_cloud_run_job_failures\" AND resource.type=\"cloud_run_job\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "60s",
+            "perSeriesAligner": "ALIGN_DELTA",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "combiner": "OR",
+  "enabled": true,
+  "alertStrategy": {
+    "autoClose": "604800s"
+  }
+}
