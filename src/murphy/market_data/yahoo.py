@@ -56,8 +56,8 @@ class YahooFinanceProvider:
     def fetch_option_chain_snapshots(
         self,
         tickers: list[str],
-        min_dte: int,
-        max_dte: int,
+        min_dte: float,
+        max_dte: float,
         as_of: datetime | None = None,
     ) -> list[OptionSnapshot]:
         import yfinance as yf

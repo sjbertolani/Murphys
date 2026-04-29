@@ -26,8 +26,8 @@ def provider_from_name(name: str) -> MarketDataProvider:
 def collect_market_snapshots(
     provider: MarketDataProvider,
     tickers: list[str],
-    min_dte: int,
-    max_dte: int,
+    min_dte: float,
+    max_dte: float,
     lookback_days: int,
     as_of: datetime | None = None,
 ) -> tuple[list[UnderlyingBar], list[OptionSnapshot], CollectionResult]:
@@ -60,4 +60,3 @@ def _utc_now_if_none(value: datetime | None) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
-

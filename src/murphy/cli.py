@@ -123,8 +123,8 @@ def main() -> None:
     collect_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
     collect_parser.add_argument("--db", default="data/murphy.duckdb")
     collect_parser.add_argument("--tickers", nargs="+", required=True)
-    collect_parser.add_argument("--min-dte", type=int, default=0)
-    collect_parser.add_argument("--max-dte", type=int, default=14)
+    collect_parser.add_argument("--min-dte", type=float, default=0.0)
+    collect_parser.add_argument("--max-dte", type=float, default=14.0)
     collect_parser.add_argument("--lookback-days", type=int, default=10)
 
     predict_parser = subparsers.add_parser(
@@ -145,8 +145,8 @@ def main() -> None:
     cycle_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
     cycle_parser.add_argument("--db", default="data/murphy.duckdb")
     cycle_parser.add_argument("--tickers", nargs="+", required=True)
-    cycle_parser.add_argument("--min-dte", type=int, default=0)
-    cycle_parser.add_argument("--max-dte", type=int, default=14)
+    cycle_parser.add_argument("--min-dte", type=float, default=0.0)
+    cycle_parser.add_argument("--max-dte", type=float, default=14.0)
     cycle_parser.add_argument("--lookback-days", type=int, default=10)
     cycle_parser.add_argument("--max-questions", type=int, default=50)
     cycle_parser.add_argument("--strike-window-size", type=int, default=5)
@@ -700,8 +700,8 @@ def _collect_into_repository(
     repository,
     provider_name: str,
     tickers: list[str],
-    min_dte: int,
-    max_dte: int,
+    min_dte: float,
+    max_dte: float,
     lookback_days: int,
 ):
     provider = provider_from_name(provider_name)

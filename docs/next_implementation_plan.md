@@ -11,7 +11,7 @@ AAPL MSFT NVDA AMD SPY QQQ
 
 Current live question generation rule:
 
-- Fetch expiries from 0 to 14 days out.
+- Fetch expiries at least 12 hours out and no more than 14 days out.
 - For each ticker/expiry, generate questions for up to 5 call strikes below
   current spot and up to 5 call strikes at or above current spot.
 - Cap production generation at 5 questions per ticker per run, with a global

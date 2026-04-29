@@ -345,6 +345,59 @@ def test_duckdb_repository_generates_strike_ladder_around_spot(tmp_path) -> None
         repo.close()
 
 
+def test_duckdb_repository_skips_expirations_with_less_than_min_dte(tmp_path) -> None:
+    db_path = tmp_path / "murphy.duckdb"
+    quote_time = datetime(2026, 4, 27, 16, 0, tzinfo=timezone.utc)
+    repo = DuckDbRepository(db_path)
+    try:
+        repo.insert_option_snapshots(
+            [
+                OptionSnapshot(
+                    symbol="AAPL",
+                    option_symbol="AAPL260427C00100000",
+                    quote_timestamp=quote_time,
+                    expiration=quote_time + timedelta(hours=6),
+                    strike=100,
+                    right=OptionRight.CALL,
+                    bid=1.0,
+                    ask=1.2,
+                    mid=1.1,
+                    implied_volatility=0.3,
+                    volume=10,
+                    open_interest=100,
+                    spot=101.0,
+                ),
+                OptionSnapshot(
+                    symbol="AAPL",
+                    option_symbol="AAPL260428C00100000",
+                    quote_timestamp=quote_time,
+                    expiration=quote_time + timedelta(hours=18),
+                    strike=100,
+                    right=OptionRight.CALL,
+                    bid=1.0,
+                    ask=1.2,
+                    mid=1.1,
+                    implied_volatility=0.3,
+                    volume=10,
+                    open_interest=100,
+                    spot=101.0,
+                ),
+            ]
+        )
+
+        questions = repo.generate_live_questions(
+            min_dte=0.5,
+            max_dte=14,
+            max_questions=5,
+        )
+
+        assert len(questions) == 1
+        assert questions[0].expiration.date().isoformat() == "2026-04-28"
+        assert questions[0].question_text == "Will the price of $AAPL be greater than $100.00 on 2026-04-28?"
+    finally:
+        repo.close()
+
+
 def test_duckdb_repository_balances_question_cap_per_ticker(tmp_path) -> None:
     db_path = tmp_path / "murphy.duckdb"
     quote_time = datetime(2026, 4, 27, 16, 0, tzinfo=timezone.utc)

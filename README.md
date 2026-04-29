@@ -16,7 +16,7 @@ Will the price of $TICKER be greater than $ATM_CALL_OPTION_STRIKE_PRICE on $DATE
 
 Question generation now uses a short-term strike ladder:
 
-- Expiries are limited to the next 14 days.
+- Expiries must be at least 12 hours away and no more than 14 days away.
 - For each ticker and expiry, select up to 5 call strikes below the current spot price.
 - Also select up to 5 call strikes at or above the current spot price.
 - Each selected strike becomes a binary question for that forecast timestamp.
