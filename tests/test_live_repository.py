@@ -94,7 +94,7 @@ def test_duckdb_repository_live_question_and_prediction(tmp_path) -> None:
               (question_id, resolved_at, underlying_close, label, source)
             VALUES (?, ?, ?, ?, 'test')
             """,
-            [questions[0].question_id, quote_time + timedelta(days=7), 205.0, 1],
+            [questions[0].question_id, quote_time, 205.0, 1],
         )
         repo.db.conn.execute(
             "UPDATE option_examples SET label = 1 WHERE example_id = ?",
@@ -102,6 +102,11 @@ def test_duckdb_repository_live_question_and_prediction(tmp_path) -> None:
         )
         resolved_report = repo.evaluation_report(ticker="AAPL", include_unresolved=False)
         assert resolved_report["summary"]["n_resolved"] == 1
+        assert resolved_report["summary"]["n_leakage_check_failures"] == 0
+        assert (
+            resolved_report["predictions"][0]["leakage_checks"]["prediction_not_after_resolved_at"]
+            is True
+        )
         assert resolved_report["summary"]["brier_score"] == (0.61 - 1.0) ** 2
         assert resolved_report["summary"]["n_posterior_scorable"] == 1
         assert resolved_report["summary"]["posterior_brier_score"] is not None

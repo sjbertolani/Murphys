@@ -455,8 +455,6 @@ def main() -> None:
                 ticker=args.ticker,
                 limit=args.limit,
                 include_unresolved=not args.resolved_only,
-                test_fraction=args.test_fraction,
-                validation_fraction=args.validation_fraction,
             )
         finally:
             repository.close()
@@ -471,6 +469,8 @@ def main() -> None:
                 ticker=args.ticker,
                 limit=args.limit,
                 include_unresolved=not args.resolved_only,
+                test_fraction=args.test_fraction,
+                validation_fraction=args.validation_fraction,
             )
         finally:
             repository.close()

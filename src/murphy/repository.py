@@ -2500,7 +2500,7 @@ def _evaluation_item(row: dict, llm_cache: list[dict], market_cache: list[dict])
             resolution_due,
         ),
         "prediction_not_after_resolved_at": (
-            True if resolved_at is None else _lte_or_unknown(prediction_created_at, resolved_at)
+            True if resolved_at is None else _lte_or_unknown(prediction_created_at, resolution_due)
         ),
         "llm_cache_captured_not_after_resolution_due": (
             True
