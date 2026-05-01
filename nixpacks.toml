@@ -1,0 +1,20 @@
+providers = ["python"]
+
+[variables]
+NIXPACKS_PYTHON_VERSION = "3.12"
+PYTHONDONTWRITEBYTECODE = "1"
+PYTHONUNBUFFERED = "1"
+
+[phases.install]
+cmds = [
+  "python -m pip install --no-cache-dir --upgrade pip",
+  "python -m pip install --no-cache-dir '.[agent,gcp,providers]'",
+]
+
+[phases.build]
+cmds = [
+  "mkdir -p /data",
+]
+
+[start]
+cmd = "murphy init-db --db /data/murphy.duckdb"
