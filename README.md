@@ -72,9 +72,9 @@ Enabled Cloud Scheduler jobs:
 | --- | --- | --- |
 | `murphy-live-cycle-trading-hourly` | `30 6-12 * * 1-5` | Collect market data, generate hourly forecast instances, call OpenAI |
 | `murphy-live-cycle-trading-close` | `0 13 * * 1-5` | Final close-time live cycle |
-| `murphy-resolve-and-report-post-close` | `15 13 * * 1-5` | Collect expiry-date bars, resolve due predictions, print report |
-| `murphy-bigquery-mirror-post-close` | `30 13 * * 1-5` | Mirror Cloud SQL live/audit tables to BigQuery |
-| `murphy-daily-status-post-close` | `45 13 * * 1-5` | Print operational status and warnings |
+| `murphy-resolve-and-report-post-close` | `15 14 * * 1-5` | Collect expiry-date bars, resolve due predictions, print report |
+| `murphy-bigquery-mirror-post-close` | `30 14 * * 1-5` | Mirror Cloud SQL live/audit tables to BigQuery |
+| `murphy-daily-status-post-close` | `45 14 * * 1-5` | Print operational status and warnings |
 | `murphy-scalar-sft-export-weekly` | `0 9 * * 6` | Export resolved ScalarLM SFT JSONL to GCS |
 
 ## No-Leakage Design

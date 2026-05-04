@@ -295,7 +295,8 @@ Suggested first schedule:
 - Hourly during market hours: collect Yahoo snapshots.
 - 09:30 PT: mid-session question generation/prediction.
 - 12:30 PT: afternoon question generation/prediction.
-- 13:05 PT: post-close-ish resolution and cleanup.
+- 14:15 PT and later: resolution and cleanup after the system's 21:00 UTC
+  option-expiry due timestamp.
 
 ## LLM Cutoff Policy
 
