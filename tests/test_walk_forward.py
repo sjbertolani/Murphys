@@ -72,6 +72,7 @@ def test_build_walk_forward_report_scores_expanding_folds() -> None:
     assert "platt_llm_probability" in methods
     assert "learned_logit_ensemble" in methods
     assert all(row["n"] > 0 for row in report["summary"])
+    assert report["recommendation"]["selected_shadow_candidate"] in methods
 
 
 def test_render_walk_forward_markdown_contains_core_sections() -> None:
@@ -86,5 +87,6 @@ def test_render_walk_forward_markdown_contains_core_sections() -> None:
 
     assert "# Murphy Walk-Forward Evaluation" in markdown
     assert "## Method Summary" in markdown
+    assert "## Recommendation" in markdown
     assert "fixed_blf_posterior" in markdown
     assert "learned_logit_ensemble" in markdown

@@ -77,6 +77,7 @@ def build_walk_forward_report(
         {"method": method, **_metrics_for_rows(rows)}
         for method, rows in sorted(method_rows.items())
     ]
+    recommendation = _candidate_recommendation(summary_rows, fold_rows)
     return {
         "generated_at": generated_at or datetime.now(UTC),
         "ticker": None if ticker is None else ticker.upper(),
@@ -89,6 +90,7 @@ def build_walk_forward_report(
         "eligible_contract_groups": len({item["contract_group_key"] for item in candidates}),
         "excluded_rows": _excluded_counts(evaluation.get("predictions", [])),
         "methods": _method_descriptions(),
+        "recommendation": recommendation,
         "summary": summary_rows,
         "folds": fold_rows,
         "warnings": split_warnings,
@@ -108,6 +110,10 @@ def render_walk_forward_markdown(report: dict[str, Any]) -> str:
         "## Method Summary",
         "",
         _table(report["summary"]),
+        "",
+        "## Recommendation",
+        "",
+        _recommendation_markdown(report["recommendation"]),
         "",
         "## Fold Metrics",
         "",
@@ -381,6 +387,105 @@ def _method_descriptions() -> list[dict[str, str]]:
             "description": "Walk-forward logistic blend of raw LLM and fixed posterior logits.",
         },
     ]
+
+
+def _candidate_recommendation(
+    summary_rows: list[dict[str, Any]],
+    fold_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    by_method = {str(row["method"]): row for row in summary_rows}
+    candidate_methods = [
+        "learned_logit_ensemble",
+        "platt_fixed_blf_posterior",
+        "platt_llm_probability",
+        "fixed_blf_posterior",
+        "llm_probability",
+    ]
+    candidates = [by_method[method] for method in candidate_methods if method in by_method]
+    if not candidates:
+        return {
+            "selected_shadow_candidate": None,
+            "current_primary_candidate": None,
+            "selection_metric": "unavailable",
+            "rationale": ["No candidate methods were scored."],
+            "guardrails": ["Collect more resolved rows before selecting a calibration candidate."],
+        }
+
+    selected = min(
+        candidates,
+        key=lambda row: (
+            float(row["log_loss"]),
+            float(row["brier_score"]),
+            float(row["ece_10"]),
+        ),
+    )
+    primary = by_method.get("fixed_blf_posterior") or by_method.get("llm_probability")
+    llm = by_method.get("llm_probability")
+    selected_fold_rows = [
+        row for row in fold_rows if row.get("method") == selected.get("method")
+    ]
+    llm_fold_rows = {row.get("fold"): row for row in fold_rows if row.get("method") == "llm_probability"}
+    unstable_folds = []
+    for row in selected_fold_rows:
+        llm_row = llm_fold_rows.get(row.get("fold"))
+        if llm_row is None:
+            continue
+        if float(row["brier_score"]) > float(llm_row["brier_score"]) + 0.05:
+            unstable_folds.append(row.get("fold"))
+
+    rationale = [
+        (
+            f"{selected['method']} has the lowest walk-forward log loss "
+            f"({float(selected['log_loss']):.4f}) among scored candidates."
+        ),
+        (
+            f"Its Brier score is {float(selected['brier_score']):.4f} and ECE is "
+            f"{float(selected['ece_10']):.4f}."
+        ),
+    ]
+    if llm is not None:
+        rationale.append(
+            (
+                f"Raw LLM baseline: log_loss={float(llm['log_loss']):.4f}, "
+                f"brier={float(llm['brier_score']):.4f}, ece={float(llm['ece_10']):.4f}."
+            )
+        )
+    guardrails = [
+        "Use as a shadow calibration candidate first; do not replace stored raw LLM probabilities.",
+        "Train/tune only on contract groups strictly earlier than the forecasted contract group.",
+        "Keep recording raw LLM probability, fixed posterior, and selected calibrated probability side by side.",
+    ]
+    if unstable_folds:
+        guardrails.append(
+            (
+                "Do not enable until at least 100 prior contract groups are available; "
+                f"small-training folds were unstable: {unstable_folds}."
+            )
+        )
+    return {
+        "selected_shadow_candidate": selected["method"],
+        "current_primary_candidate": None if primary is None else primary["method"],
+        "selection_metric": "lowest walk-forward log loss; Brier and ECE used as secondary checks",
+        "unstable_folds": unstable_folds,
+        "rationale": rationale,
+        "guardrails": guardrails,
+    }
+
+
+def _recommendation_markdown(recommendation: dict[str, Any]) -> str:
+    lines = [
+        f"Selected shadow candidate: `{recommendation.get('selected_shadow_candidate')}`",
+        f"Current primary candidate: `{recommendation.get('current_primary_candidate')}`",
+        f"Selection metric: {recommendation.get('selection_metric')}",
+        "",
+        "Rationale:",
+    ]
+    for item in recommendation.get("rationale", []):
+        lines.append(f"- {item}")
+    lines.extend(["", "Guardrails:"])
+    for item in recommendation.get("guardrails", []):
+        lines.append(f"- {item}")
+    return "\n".join(lines)
 
 
 def _rows_for_groups(
