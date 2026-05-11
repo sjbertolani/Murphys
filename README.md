@@ -151,6 +151,21 @@ The analysis report includes a grouped train/test readiness summary using the
 same `symbol|resolution_due|strike` contract boundary as the ScalarLM split
 export.
 
+Write a walk-forward model comparison report:
+
+```bash
+murphy walk-forward-report \
+  --backend cloud-sql \
+  --n-folds 5 \
+  --min-train-groups 20 \
+  --output data/walk_forward_report.md
+```
+
+The walk-forward report evaluates resolved, leakage-clean rows with expanding
+contract-group folds. It compares the raw LLM probability, the current fixed
+BLF-style posterior, walk-forward Platt calibration, and a learned logit
+ensemble trained only on earlier folds.
+
 The two underlying steps are also available separately:
 
 ```bash
@@ -193,7 +208,7 @@ murphy export-scalar-sft-splits \
 
 ## Verified So Far
 
-- Full test suite passes: `46 passed`.
+- Full test suite passes: `49 passed`.
 - Cloud Run `murphy-daily-status` executed successfully.
 - Cloud Run `murphy-scalar-sft-export` executed successfully and uploaded an expected empty JSONL while there are no resolved labels yet.
 - BigQuery mirror has been verified with live row counts.
@@ -213,5 +228,5 @@ Near-term priorities:
 
 - Add notification channels to the GCP alert policies.
 - Add a trained logistic live prior once enough resolved labels exist; the guarded historical empirical prior is already wired in.
-- Extend `murphy analysis-report` with plots and model-comparison tables.
+- Use `murphy walk-forward-report` to tune calibration/blend candidates before changing production forecast probabilities.
 - Use the grouped split exports for ScalarLM training and offline model comparisons.

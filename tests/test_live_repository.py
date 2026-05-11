@@ -13,7 +13,7 @@ from murphy.schemas import OptionRight, OptionSnapshot, UnderlyingBar
 
 def test_duckdb_repository_live_question_and_prediction(tmp_path) -> None:
     db_path = tmp_path / "murphy.duckdb"
-    quote_time = datetime(2026, 4, 27, 16, 0, tzinfo=timezone.utc)
+    quote_time = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=1)
     repo = DuckDbRepository(db_path)
     try:
         repo.insert_underlying_bars(

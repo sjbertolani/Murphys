@@ -36,6 +36,7 @@ from murphy.training.datasets import (
     scalar_sft_split_datasets_from_report,
     write_jsonl,
 )
+from murphy.walk_forward import build_walk_forward_report, render_walk_forward_markdown
 from murphy.web_context import YahooFinanceNewsProvider, news_items_payload
 
 
@@ -203,6 +204,20 @@ def main() -> None:
     offline_analysis_parser.add_argument("--validation-fraction", type=float, default=0.0)
     offline_analysis_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
     offline_analysis_parser.add_argument("--output", default="data/offline_analysis_report.md")
+
+    walk_forward_parser = subparsers.add_parser(
+        "walk-forward-report",
+        help="Write a walk-forward evaluation report for resolved live predictions.",
+    )
+    walk_forward_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
+    walk_forward_parser.add_argument("--db", default="data/murphy.duckdb")
+    walk_forward_parser.add_argument("--ticker", default=None)
+    walk_forward_parser.add_argument("--limit", type=int, default=10000)
+    walk_forward_parser.add_argument("--n-folds", type=int, default=5)
+    walk_forward_parser.add_argument("--min-train-groups", type=int, default=20)
+    walk_forward_parser.add_argument("--min-test-groups", type=int, default=1)
+    walk_forward_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    walk_forward_parser.add_argument("--output", default="data/walk_forward_report.md")
 
     scalar_export_parser = subparsers.add_parser(
         "export-scalar-sft-dataset",
@@ -516,6 +531,31 @@ def main() -> None:
         for table, count in counts.items():
             print(f"{table}: {count}")
         print(f"wrote analysis report to {output_path}")
+        return
+
+    if args.command == "walk-forward-report":
+        repository = _repository_for_backend(args.backend, args.db)
+        try:
+            report = build_walk_forward_report(
+                repository,
+                ticker=args.ticker,
+                limit=args.limit,
+                n_folds=args.n_folds,
+                min_train_groups=args.min_train_groups,
+                min_test_groups=args.min_test_groups,
+            )
+        finally:
+            repository.close()
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if args.format == "json":
+            output_path.write_text(
+                json.dumps(report, default=str, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            output_path.write_text(render_walk_forward_markdown(report), encoding="utf-8")
+        print(f"wrote walk-forward report to {output_path}")
         return
 
     if args.command == "export-scalar-sft-dataset":
