@@ -15,6 +15,7 @@ from murphy.bigquery import (
 from murphy.cloud_config import load_cloud_config_from_env
 from murphy.cloud_sql import initialize_cloud_sql
 from murphy.cloud_storage import upload_file_to_gcs
+from murphy.custom_question import _normalize_datetime, score_custom_question
 from murphy.db import MurphyDb
 from murphy.external_options import (
     DEFAULT_OPTIONS_DB,
@@ -31,6 +32,7 @@ from murphy.offline_export import export_cloud_sql_to_duckdb
 from murphy.operational_status import build_operational_status_report
 from murphy.predict import DeterministicPredictor, OpenAiPredictor, predict_pending
 from murphy.repository import CloudSqlRepository, DuckDbRepository
+from murphy.shadow_blf import run_shadow_blf_v2
 from murphy.training.datasets import (
     scalar_sft_dataset_from_report,
     scalar_sft_split_datasets_from_report,
@@ -218,6 +220,38 @@ def main() -> None:
     walk_forward_parser.add_argument("--min-test-groups", type=int, default=1)
     walk_forward_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
     walk_forward_parser.add_argument("--output", default="data/walk_forward_report.md")
+
+    shadow_blf_parser = subparsers.add_parser(
+        "run-shadow-blf-v2",
+        help="Score unresolved live questions with the selected shadow BLF v2 candidate.",
+    )
+    shadow_blf_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
+    shadow_blf_parser.add_argument("--db", default="data/murphy.duckdb")
+    shadow_blf_parser.add_argument("--ticker", default=None)
+    shadow_blf_parser.add_argument("--limit", type=int, default=50)
+    shadow_blf_parser.add_argument("--min-train-groups", type=int, default=100)
+    shadow_blf_parser.add_argument("--report-limit", type=int, default=10000)
+
+    custom_question_parser = subparsers.add_parser(
+        "score-custom-question",
+        help="Score a one-off ticker/strike/date question using live context and current calibration.",
+    )
+    custom_question_parser.add_argument("--backend", default="duckdb", choices=["duckdb", "cloud-sql"])
+    custom_question_parser.add_argument("--db", default="data/murphy.duckdb")
+    custom_question_parser.add_argument("--provider", default="yahoo", choices=["yahoo", "yfinance"])
+    custom_question_parser.add_argument("--ticker", required=True)
+    custom_question_parser.add_argument("--strike", type=float, required=True)
+    custom_question_parser.add_argument("--date", required=True)
+    custom_question_parser.add_argument("--model", default="gpt-4.1-mini")
+    custom_question_parser.add_argument("--lookback-days", type=int, default=5)
+    custom_question_parser.add_argument("--news-limit", type=int, default=5)
+    custom_question_parser.add_argument("--min-train-groups", type=int, default=100)
+    custom_question_parser.add_argument("--report-limit", type=int, default=10000)
+    custom_question_parser.add_argument("--max-expiry-gap-days", type=int, default=7)
+    custom_question_parser.add_argument("--no-news-context", action="store_true")
+    custom_question_parser.add_argument("--dry-run", action="store_true")
+    custom_question_parser.add_argument("--dry-run-probability", type=float, default=0.5)
+    custom_question_parser.add_argument("--as-of", default=None)
 
     scalar_export_parser = subparsers.add_parser(
         "export-scalar-sft-dataset",
@@ -556,6 +590,58 @@ def main() -> None:
         else:
             output_path.write_text(render_walk_forward_markdown(report), encoding="utf-8")
         print(f"wrote walk-forward report to {output_path}")
+        return
+
+    if args.command == "run-shadow-blf-v2":
+        repository = _repository_for_backend(args.backend, args.db)
+        try:
+            result = run_shadow_blf_v2(
+                repository,
+                ticker=args.ticker,
+                limit=args.limit,
+                min_train_groups=args.min_train_groups,
+                report_limit=args.report_limit,
+            )
+        finally:
+            repository.close()
+        print(json.dumps(result, default=str, indent=2, sort_keys=True))
+        return
+
+    if args.command == "score-custom-question":
+        repository = _repository_for_backend(args.backend, args.db)
+        try:
+            predictor = (
+                DeterministicPredictor(
+                    probability=args.dry_run_probability,
+                    model="dry-run",
+                )
+                if args.dry_run
+                else OpenAiPredictor(model=args.model)
+            )
+            model = "dry-run" if args.dry_run else args.model
+            as_of = None
+            if args.as_of:
+                as_of = _normalize_datetime(datetime.fromisoformat(args.as_of.replace("Z", "+00:00")))
+            report = score_custom_question(
+                repository,
+                provider_from_name(args.provider),
+                predictor,
+                symbol=args.ticker,
+                strike=args.strike,
+                target_date=args.date,
+                model=model,
+                news_provider=None if args.no_news_context else YahooFinanceNewsProvider(),
+                lookback_days=args.lookback_days,
+                news_limit=args.news_limit,
+                min_train_groups=args.min_train_groups,
+                report_limit=args.report_limit,
+                max_expiry_gap_days=args.max_expiry_gap_days,
+                include_news_context=not args.no_news_context,
+                as_of=as_of,
+            )
+        finally:
+            repository.close()
+        print(json.dumps(report, default=str, indent=2, sort_keys=True))
         return
 
     if args.command == "export-scalar-sft-dataset":

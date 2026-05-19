@@ -16,6 +16,7 @@ EXPORT_TABLES = [
     "live_questions",
     "llm_responses",
     "live_resolutions",
+    "forecasts",
     "agent_trials",
     "agent_steps",
     "daily_runs",

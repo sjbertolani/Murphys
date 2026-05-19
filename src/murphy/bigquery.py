@@ -15,6 +15,7 @@ MIRROR_TABLES = [
     "live_questions",
     "llm_responses",
     "live_resolutions",
+    "forecasts",
     "daily_runs",
     "external_call_cache",
 ]
@@ -113,6 +114,17 @@ BIGQUERY_TABLES = [
             {"name": "underlying_close", "type": "FLOAT"},
             {"name": "label", "type": "INTEGER"},
             {"name": "source", "type": "STRING"},
+        ],
+    ),
+    BigQueryTable(
+        name="forecasts",
+        schema=[
+            {"name": "example_id", "type": "STRING"},
+            {"name": "method", "type": "STRING"},
+            {"name": "raw_probability", "type": "FLOAT"},
+            {"name": "aggregate_probability", "type": "FLOAT"},
+            {"name": "calibrated_probability", "type": "FLOAT"},
+            {"name": "created_at", "type": "TIMESTAMP"},
         ],
     ),
     BigQueryTable(

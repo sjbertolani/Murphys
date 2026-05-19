@@ -166,6 +166,38 @@ contract-group folds. It compares the raw LLM probability, the current fixed
 BLF-style posterior, walk-forward Platt calibration, and a learned logit
 ensemble trained only on earlier folds.
 
+Run the selected calibration candidate in shadow mode on unresolved live rows:
+
+```bash
+murphy run-shadow-blf-v2 \
+  --backend cloud-sql \
+  --limit 50 \
+  --min-train-groups 100
+```
+
+This writes a separate `shadow_blf_v2_learned_logit_ensemble` forecast record
+without changing the stored raw LLM probability or the current fixed BLF-style
+posterior. The learned logit ensemble remains available as a comparison trace;
+the latest custom-question scorer now prefers Platt calibration of the raw LLM
+probability when enough prior contract groups exist.
+
+Score a one-off question with current live context and the best available
+calibration candidate:
+
+```bash
+murphy score-custom-question \
+  --backend cloud-sql \
+  --ticker AAPL \
+  --strike 295 \
+  --date 2026-06-15
+```
+
+This fetches fresh Yahoo bars and option-chain context, caches the market/news
+and LLM calls, computes the market prior and historical empirical prior, then
+returns the raw LLM probability, the fixed BLF posterior, Platt-calibrated LLM
+probability, and learned logit ensemble comparison when enough prior contract
+groups exist.
+
 The two underlying steps are also available separately:
 
 ```bash
@@ -208,7 +240,7 @@ murphy export-scalar-sft-splits \
 
 ## Verified So Far
 
-- Full test suite passes: `49 passed`.
+- Full test suite passes: `52 passed`.
 - Cloud Run `murphy-daily-status` executed successfully.
 - Cloud Run `murphy-scalar-sft-export` executed successfully and uploaded an expected empty JSONL while there are no resolved labels yet.
 - BigQuery mirror has been verified with live row counts.

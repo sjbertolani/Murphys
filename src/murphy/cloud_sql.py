@@ -72,6 +72,16 @@ CREATE TABLE IF NOT EXISTS agent_steps (
   PRIMARY KEY (trial_id, step_index)
 );
 
+CREATE TABLE IF NOT EXISTS forecasts (
+  example_id TEXT NOT NULL REFERENCES option_examples(example_id),
+  method TEXT NOT NULL,
+  raw_probability DOUBLE PRECISION NOT NULL,
+  aggregate_probability DOUBLE PRECISION,
+  calibrated_probability DOUBLE PRECISION,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (example_id, method, created_at)
+);
+
 CREATE TABLE IF NOT EXISTS live_questions (
   question_id TEXT PRIMARY KEY,
   example_id TEXT NOT NULL REFERENCES option_examples(example_id),

@@ -2516,6 +2516,7 @@ def _evaluation_item(row: dict, llm_cache: list[dict], market_cache: list[dict])
     return {
         "question_id": row.get("question_id"),
         "response_id": row.get("response_id"),
+        "example_id": row.get("example_id"),
         "symbol": row.get("symbol"),
         "question_text": row.get("question_text"),
         "status": row.get("status"),
