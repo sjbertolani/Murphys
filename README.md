@@ -260,4 +260,4 @@ resources. Before publishing a fork or pushing to a new remote:
 - Deployment details: [docs/gcp_deployment_plan.md](docs/gcp_deployment_plan.md)
 - Market data notes: [docs/market_data_provider_options.md](docs/market_data_provider_options.md)
 - Near-term implementation plan: [docs/next_implementation_plan.md](docs/next_implementation_plan.md)
-- Public launch article draft: [docs/public_launch_article.md](docs/public_launch_article.md)
+- Launch article: [From A Bayesian LLM Paper To Blind Predictions In A Week](https://medium.com/@steve.bertolani/from-a-bayesian-llm-paper-to-blind-predictions-in-a-week-2e54e15c739f)
