@@ -2,6 +2,12 @@
 
 BLF-inspired binary forecasting for near-the-money call options.
 
+tl dr ; 
+Kevin Murphy (author of the Probabilistic Machine Learning ) published this paper on Monday on Arxiv.
+I saw it on Tuesday; Codex helped build this adapted implementation on Wednesday and Thursday; by Friday it was running on GCP and making true blind predictions on live option contracts.
+
+Save your tokens and try it if you want. 
+
 This is research software. It is not trading advice, a trading strategy, or a
 live trading system.
 
@@ -9,12 +15,7 @@ live trading system.
 
 Murphy started as a one-week implementation experiment inspired by Kevin
 Murphy's paper, "Agentic Forecasting using Sequential Bayesian Updating of
-Linguistic Beliefs" (arXiv:2604.18576). The short version: Kevin Murphy, author
-of the Probabilistic Machine Learning books, published the paper on Monday; I
-saw it on Tuesday; Codex helped build this adapted implementation on Wednesday
-and Thursday; by Friday it was running on GCP and making true blind predictions
-on live option contracts.
-
+Linguistic Beliefs" (arXiv:2604.18576).
 The paper describes the Bayesian Linguistic Forecaster, or BLF: an agentic
 forecasting loop that keeps a structured belief state, updates that belief with
 tool observations, aggregates multiple trials, and calibrates the resulting
