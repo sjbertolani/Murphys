@@ -1,12 +1,55 @@
-# murphy
+# Murphy
 
-BLF-inspired binary forecasting for ATM or near-the-money call options.
+BLF-inspired binary forecasting for near-the-money call options.
 
-This is research software, not trading advice or a live trading system.
+This is research software. It is not trading advice, a trading strategy, or a
+live trading system.
 
-## Current State
+## Why This Exists
 
-The system now runs a live, no-leakage forecasting loop on GCP for hourly call-option predictions. It uses Yahoo Finance as the first market data provider, OpenAI for LLM probabilities, Cloud SQL as the transactional source of truth, BigQuery as an analytics mirror, GCS for dataset artifacts, and DuckDB for offline/local analysis.
+Murphy started as a one-week implementation experiment inspired by Kevin
+Murphy's paper, "Agentic Forecasting using Sequential Bayesian Updating of
+Linguistic Beliefs" (arXiv:2604.18576). The short version: Kevin Murphy, author
+of the Probabilistic Machine Learning books, published the paper on Monday; I
+saw it on Tuesday; Codex helped build this adapted implementation on Wednesday
+and Thursday; by Friday it was running on GCP and making true blind predictions
+on live option contracts.
+
+The paper describes the Bayesian Linguistic Forecaster, or BLF: an agentic
+forecasting loop that keeps a structured belief state, updates that belief with
+tool observations, aggregates multiple trials, and calibrates the resulting
+probabilities.
+
+The original paper described the architecture but did not come with a complete
+drop-in codebase for this options-specific use case. That used to be a serious
+barrier: reimplementing a research system from prose meant weeks of scaffolding
+before the interesting questions could even start. With Codex and modern LLMs,
+that is no longer the hard part. The interesting work moves up a level: reading
+the paper carefully, making the assumptions explicit, adapting the method to a
+new domain, and building enough auditability to know whether the system is
+actually forecasting or just leaking future information.
+
+This repository is that adaptation for binary call-option forecasts.
+
+## How This Deviates From The Paper
+
+The paper evaluates BLF on forecasting benchmark questions. Murphy intentionally
+deviates from that setting in two important ways:
+
+- **True blind prediction.** Instead of only replaying historical questions, the
+  live loop generates forecasts from market snapshots captured at prediction
+  time. Labels are unknown when the LLM is called and are resolved later from
+  stored underlying prices.
+- **Cloud-native operation on GCP.** The system is designed to run as scheduled
+  Google Cloud Run Jobs with Cloud SQL as the transactional source of truth,
+  BigQuery as an analytics mirror, GCS for dataset artifacts, and Secret Manager
+  for runtime credentials.
+
+The core BLF ideas remain visible: structured prompts, strict information
+cutoffs, persisted evidence, probability traces, market-implied priors,
+calibration, and walk-forward evaluation.
+
+## Forecasting Task
 
 The live question template is:
 
@@ -14,93 +57,106 @@ The live question template is:
 Will the price of $TICKER be greater than $ATM_CALL_OPTION_STRIKE_PRICE on $DATE_OF_EXPIRY?
 ```
 
-Question generation now uses a short-term strike ladder:
+The system treats each hourly market snapshot as a distinct forecast instance.
+The same English question may appear more than once, but each instance has its
+own option price, spot price, implied volatility, volume/open interest, cached
+context, prompt, LLM response, and information cutoff.
 
-- Expiries must be at least 12 hours away and no more than 14 days away.
-- For each ticker and expiry, select up to 5 call strikes below the current spot price.
-- Also select up to 5 call strikes at or above the current spot price.
-- Each selected strike becomes a binary question for that forecast timestamp.
-- Production uses `--max-questions-per-ticker=5` with a global `--max-questions=30`
-  so the six-ticker set is balanced each run.
-
-Important dataset rule: the same English question may repeat, but each hourly market snapshot is a distinct forecast instance. The identity is effectively ticker/option/strike/expiry plus forecast-hour information cutoff. This preserves changing option prices, spot, IV, volume/open interest, cached context, prompt, and LLM response over time.
-
-Current live ticker set:
+Current default ticker set:
 
 ```text
 AAPL MSFT NVDA AMD SPY QQQ
 ```
 
-## Live GCP Deployment
+The live generator uses a short-term strike ladder:
 
-Project:
+- Expiries must be at least 12 hours away and no more than 14 days away.
+- For each ticker and expiry, select up to 5 call strikes below spot.
+- Select up to 5 call strikes at or above spot.
+- Each selected strike becomes a binary question for that forecast timestamp.
+- Production-style runs can cap both per-ticker and global question counts.
 
-```text
-murphys-494519
-```
+## Architecture
 
-Region:
+Local and cloud components share the same core package.
 
-```text
-us-west1
-```
+- **Collectors** fetch underlying bars and option-chain snapshots.
+- **Question generation** turns option snapshots into binary events.
+- **Predictors** call an OpenAI-compatible model or a deterministic dry-run
+  predictor.
+- **Repositories** persist the live/audit trail to DuckDB or Cloud SQL.
+- **Evaluation commands** resolve labels, check leakage constraints, export
+  datasets, and run walk-forward calibration reports.
 
-Local `gcloud` note:
+Cloud deployment uses:
 
-```bash
-/usr/local/share/google-cloud-sdk/bin/gcloud auth login
-/usr/local/share/google-cloud-sdk/bin/gcloud config set project murphys-494519
-/usr/local/share/google-cloud-sdk/bin/gcloud config set run/region us-west1
-```
-
-On this machine the `gcloud` binary may not be on `PATH`; use the full path
-`/usr/local/share/google-cloud-sdk/bin/gcloud`. The local browser auth flow
-worked reliably. The `--no-launch-browser` remote verification-code flow hit
-Google's "Access blocked: This app's request is invalid" error.
-
-Main assets:
-
-- Cloud SQL Postgres instance: `murphy-postgres`
-- Artifact Registry image: `us-west1-docker.pkg.dev/murphys-494519/murphy/murphy:latest`
-- GCS artifact bucket: `gs://murphys-494519-murphy-artifacts`
-- BigQuery dataset: `murphy`
-- Secrets: `openai-api-key`, `murphy-db-pass`
-
-Enabled Cloud Scheduler jobs:
-
-| Job | Schedule PT | Purpose |
-| --- | --- | --- |
-| `murphy-live-cycle-trading-hourly` | `30 6-12 * * 1-5` | Collect market data, generate hourly forecast instances, call OpenAI |
-| `murphy-live-cycle-trading-close` | `0 13 * * 1-5` | Final close-time live cycle |
-| `murphy-resolve-and-report-post-close` | `15 14 * * 1-5` | Collect expiry-date bars, resolve due predictions, print report |
-| `murphy-bigquery-mirror-post-close` | `30 14 * * 1-5` | Mirror Cloud SQL live/audit tables to BigQuery |
-| `murphy-daily-status-post-close` | `45 14 * * 1-5` | Print operational status and warnings |
-| `murphy-scalar-sft-export-weekly` | `0 9 * * 6` | Export resolved ScalarLM SFT JSONL to GCS |
+- Cloud Run Jobs for collection, prediction, resolution, reporting, and exports.
+- Cloud Scheduler for trading-hour and post-close runs.
+- Cloud SQL Postgres for live state.
+- BigQuery for mirrored analytics tables.
+- GCS for exported datasets and reports.
+- Secret Manager for API keys and database passwords.
 
 ## No-Leakage Design
 
-- Every forecast gets an `information_cutoff`.
+Murphy is built around a simple rule: every forecast must be explainable using
+only information available at its `information_cutoff`.
+
+- Every forecast stores an information cutoff.
 - Prompts include only stored evidence at or before that cutoff.
-- Market data, cached web/news context, and LLM calls are recorded in `external_call_cache`.
-- Cache records include request/response payloads, timestamps, and response hashes.
-- Resolution requires an underlying bar from the actual expiry date by default, preventing stale prior-close labeling.
+- Market data, cached news context, prompt text, and LLM responses are persisted.
+- Resolution requires underlying bars from the actual expiry date by default.
 - Evaluation reports include leakage checks and cache hash references.
-- Prediction traces include market-implied prior, historical empirical prior when enough prior labels exist, raw LLM probability, and a BLF-style log-odds posterior update.
+- Walk-forward reports split by contract group, not random rows, so repeated
+  hourly snapshots for the same option contract do not cross train/test splits.
 
-## Data Stores
+## Installation
 
-Cloud SQL tables include:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev,agent,gcp,providers,training]"
+```
 
-- `underlying_bars`
-- `option_chain_snapshots`
-- `option_examples`
-- `live_questions`
-- `llm_responses`
-- `live_resolutions`
-- `daily_runs`
-- `external_call_cache`
+For local development without cloud extras:
 
-BigQuery mirrors the live/audit tables for analytics. DuckDB exports are available for offline work.
+```bash
+python -m pip install -e ".[dev,providers]"
+```
+
+## Configuration
+
+Copy the example environment file and fill in local values:
+
+```bash
+cp .env.example .env
+```
+
+Never commit real credentials. `.env`, `.env.*`, `.env~`, `.gcloud/`, DuckDB
+files, JSON/JSONL data exports, and generated reports under `data/` are ignored.
+
+For GCP, use `deployment/env.gcp.example` as a template. Real values should live
+in your shell, CI secrets, or Google Secret Manager.
+
+Required runtime variables depend on the backend:
+
+```bash
+CLOUD_SQL_CONNECTION_NAME=your-gcp-project:us-west1:murphy-postgres
+DB_NAME=murphy
+DB_USER=murphy_app
+DB_PASS=replace-me
+PRIVATE_IP=false
+
+BQ_PROJECT_ID=your-gcp-project
+BQ_DATASET=murphy
+BQ_LOCATION=US
+
+OPENAI_API_KEY=replace-me
+MARKET_DATA_API_KEY=replace-me
+```
+
+`MARKET_DATA_API_KEY` is reserved for providers that need one. The current
+Yahoo/yfinance prototype does not use an official paid key.
 
 ## Useful Commands
 
@@ -116,7 +172,7 @@ Initialize local DuckDB:
 murphy init-db --db data/murphy.duckdb
 ```
 
-Run a local/live cycle:
+Run a dry local live cycle:
 
 ```bash
 murphy run-live-cycle \
@@ -126,16 +182,10 @@ murphy run-live-cycle \
   --dry-run
 ```
 
-Print an operational report:
+Generate a live operational report:
 
 ```bash
 murphy daily-status --backend cloud-sql --include-bigquery
-```
-
-Print an evaluation report:
-
-```bash
-murphy evaluation-report --backend cloud-sql --ticker AAPL
 ```
 
 Write an offline analysis report:
@@ -147,11 +197,7 @@ murphy offline-analysis \
   --test-fraction 0.2
 ```
 
-The analysis report includes a grouped train/test readiness summary using the
-same `symbol|resolution_due|strike` contract boundary as the ScalarLM split
-export.
-
-Write a walk-forward model comparison report:
+Run a walk-forward calibration comparison:
 
 ```bash
 murphy walk-forward-report \
@@ -161,28 +207,7 @@ murphy walk-forward-report \
   --output data/walk_forward_report.md
 ```
 
-The walk-forward report evaluates resolved, leakage-clean rows with expanding
-contract-group folds. It compares the raw LLM probability, the current fixed
-BLF-style posterior, walk-forward Platt calibration, and a learned logit
-ensemble trained only on earlier folds.
-
-Run the selected calibration candidate in shadow mode on unresolved live rows:
-
-```bash
-murphy run-shadow-blf-v2 \
-  --backend cloud-sql \
-  --limit 50 \
-  --min-train-groups 100
-```
-
-This writes a separate `shadow_blf_v2_learned_logit_ensemble` forecast record
-without changing the stored raw LLM probability or the current fixed BLF-style
-posterior. The learned logit ensemble remains available as a comparison trace;
-the latest custom-question scorer now prefers Platt calibration of the raw LLM
-probability when enough prior contract groups exist.
-
-Score a one-off question with current live context and the best available
-calibration candidate:
+Score a one-off question with current live context:
 
 ```bash
 murphy score-custom-question \
@@ -192,73 +217,46 @@ murphy score-custom-question \
   --date 2026-06-15
 ```
 
-This fetches fresh Yahoo bars and option-chain context, caches the market/news
-and LLM calls, computes the market prior and historical empirical prior, then
-returns the raw LLM probability, the fixed BLF posterior, Platt-calibrated LLM
-probability, and learned logit ensemble comparison when enough prior contract
-groups exist.
-
-The two underlying steps are also available separately:
-
-```bash
-murphy export-cloud-sql-to-duckdb --duckdb data/murphy_offline.duckdb
-murphy analysis-report \
-  --backend duckdb \
-  --db data/murphy_offline.duckdb \
-  --output data/offline_analysis_report.md
-```
-
-Mirror Cloud SQL to BigQuery:
-
-```bash
-murphy mirror-cloud-sql-to-bigquery
-```
-
-Export Cloud SQL to DuckDB:
-
-```bash
-murphy export-cloud-sql-to-duckdb --duckdb data/murphy_offline.duckdb
-```
-
-Export resolved ScalarLM SFT rows:
+Export resolved ScalarLM-style SFT rows:
 
 ```bash
 murphy export-scalar-sft-dataset \
   --backend cloud-sql \
   --output /tmp/scalar_sft_resolved.jsonl \
-  --gcs-uri gs://murphys-494519-murphy-artifacts/scalar_sft/
+  --gcs-uri gs://your-murphy-artifacts/scalar_sft/
 ```
 
-Export resolved ScalarLM rows into leakage-safe grouped train/test files:
+## GCP Bootstrap
+
+The deployment examples are intentionally generic. Set your own project and
+region before running cloud commands:
 
 ```bash
-murphy export-scalar-sft-splits \
-  --backend cloud-sql \
-  --output-dir data/scalar_sft_splits \
-  --test-fraction 0.2
+export PROJECT_ID="your-gcp-project"
+export REGION="us-west1"
+export REPO="murphy"
+export IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/murphy:latest"
+
+PROJECT_ID="$PROJECT_ID" REGION="$REGION" bash deployment/bootstrap_gcp.sh
 ```
 
-## Verified So Far
+See [docs/gcp_deployment_plan.md](docs/gcp_deployment_plan.md) for the full
+Cloud Run, Cloud Scheduler, Cloud SQL, BigQuery, and Secret Manager plan.
 
-- Full test suite passes: `52 passed`.
-- Cloud Run `murphy-daily-status` executed successfully.
-- Cloud Run `murphy-scalar-sft-export` executed successfully and uploaded an expected empty JSONL while there are no resolved labels yet.
-- BigQuery mirror has been verified with live row counts.
-- The current deployed generator creates at most one forecast per ticker/strike/expiry per forecast hour.
-- Expanded scheduled run for `AAPL MSFT NVDA AMD SPY QQQ` completed successfully with 946 option snapshots, 30 cached news items, 30 questions, and 30 predictions.
-- Cloud Monitoring alert policies exist for failed Cloud Run jobs and non-empty `daily-status` warnings.
+## Repository Hygiene
+
+The current tree uses placeholders for credentials and project-specific cloud
+resources. Before publishing a fork or pushing to a new remote:
+
+- Run a secret scanner against both the working tree and git history.
+- Keep real `.env` files and local cloud auth directories untracked.
+- Rotate any API keys that were ever committed to a private remote.
+- Consider rewriting history if private project IDs, bucket names, or resource
+  names should not appear in public commit history.
 
 ## Docs
 
 - Deployment details: [docs/gcp_deployment_plan.md](docs/gcp_deployment_plan.md)
 - Market data notes: [docs/market_data_provider_options.md](docs/market_data_provider_options.md)
 - Near-term implementation plan: [docs/next_implementation_plan.md](docs/next_implementation_plan.md)
-
-## Next Work
-
-Near-term priorities:
-
-- Add notification channels to the GCP alert policies.
-- Add a trained logistic live prior once enough resolved labels exist; the guarded historical empirical prior is already wired in.
-- Use `murphy walk-forward-report` to tune calibration/blend candidates before changing production forecast probabilities.
-- Use the grouped split exports for ScalarLM training and offline model comparisons.
+- Public launch article draft: [docs/public_launch_article.md](docs/public_launch_article.md)

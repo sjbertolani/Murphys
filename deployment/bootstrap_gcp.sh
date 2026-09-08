@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Project-specific bootstrap for Murphy live forecasting infrastructure.
+# Bootstrap Murphy live forecasting infrastructure.
 # This script enables APIs and creates IAM/service-account scaffolding.
 # It does not create Cloud SQL or Cloud Run jobs yet, because those can incur cost.
 
-PROJECT_ID="${PROJECT_ID:-murphys-494519}"
+PROJECT_ID="${PROJECT_ID:?Set PROJECT_ID to your GCP project ID before running this script.}"
 REGION="${REGION:-us-west1}"
 REPO="${REPO:-murphy}"
 RUNTIME_SA="murphy-runner@${PROJECT_ID}.iam.gserviceaccount.com"

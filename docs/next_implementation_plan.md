@@ -46,7 +46,7 @@ The intended production target is:
 murphy export-scalar-sft-dataset \
   --backend cloud-sql \
   --output /tmp/scalar_sft_resolved.jsonl \
-  --gcs-uri gs://murphys-494519-murphy-artifacts/scalar_sft/
+  --gcs-uri gs://your-murphy-artifacts/scalar_sft/
 ```
 
 ## 3. Near-Term Follow Ups

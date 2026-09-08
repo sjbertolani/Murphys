@@ -126,21 +126,20 @@ The code uses the Cloud SQL Python Connector for Postgres and the BigQuery Pytho
 Set variables:
 
 ```bash
-export PROJECT_ID="murphys-494519"
+export PROJECT_ID="your-gcp-project"
 export REGION="us-west1"
 export REPO="murphy"
 export IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/murphy:latest"
 ```
 
-For this project, a bootstrap script is available:
+The generic bootstrap script enables APIs, creates service accounts, grants
+baseline IAM roles, and creates the Artifact Registry Docker repository. It
+intentionally does not create Cloud SQL or Cloud Run jobs yet, because those are
+the first cost-bearing steps.
 
 ```bash
-bash deployment/bootstrap_gcp_murphys_494519.sh
+PROJECT_ID="$PROJECT_ID" bash deployment/bootstrap_gcp.sh
 ```
-
-This enables APIs, creates service accounts, grants baseline IAM roles, and creates the Artifact
-Registry Docker repository. It intentionally does not create Cloud SQL or Cloud Run jobs yet,
-because those are the first cost-bearing steps.
 
 Enable APIs:
 
